@@ -1,2 +1,2 @@
 # camel-sip
-Normal Camel SIP endpoint
+Normal Camel SIP component
