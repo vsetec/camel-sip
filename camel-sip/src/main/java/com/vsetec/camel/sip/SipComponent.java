@@ -15,10 +15,8 @@
  */
 package com.vsetec.camel.sip;
 
-import gov.nist.javax.sip.header.Via;
 import gov.nist.javax.sip.stack.NioMessageProcessorFactory;
 import java.net.URISyntaxException;
-import java.text.ParseException;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Iterator;
@@ -65,6 +63,8 @@ import org.apache.camel.Endpoint;
 import org.apache.camel.Exchange;
 import org.apache.camel.Processor;
 import org.apache.camel.Producer;
+import org.apache.camel.builder.RouteBuilder;
+import org.apache.camel.impl.DefaultCamelContext;
 import org.apache.camel.impl.DefaultComponent;
 import org.apache.camel.impl.DefaultEndpoint;
 import org.apache.camel.impl.DefaultExchange;
@@ -142,13 +142,13 @@ public class SipComponent extends DefaultComponent {
         final Integer receivingPort;
         final Integer responseCode;
 
-        String responseCodeString = (String) endpointParams.get("responseCode");
+        String responseCodeString = (String) endpointParams.get("code");
         if (responseCodeString == null) {
             responseCode = null;
         } else {
             responseCode = Integer.parseInt(responseCodeString);
         }
-        if (remaining.startsWith("proxy")) {
+        if (remaining.startsWith("proxy") || remaining.startsWith("respond")) {
             receivingHost = null;
             receivingTransport = null;
             receivingPort = null;
@@ -169,32 +169,57 @@ public class SipComponent extends DefaultComponent {
         }
 
         if (receivingHost == null) {
-            return new DefaultEndpoint(uri, this) {
-                @Override
-                public Producer createProducer() throws Exception {
-                    return new CamelSipProxyProducer(this, responseCode);
-                }
 
-                @Override
-                public Consumer createConsumer(Processor processor) throws Exception {
-                    return null;
-                }
+            if (responseCode == null) {
+                return new DefaultEndpoint(uri, this) {
+                    @Override
+                    public Producer createProducer() throws Exception {
+                        return new CamelSipProxyProducer(this);
+                    }
 
-                @Override
-                public boolean isSingleton() {
-                    return true;
-                }
+                    @Override
+                    public Consumer createConsumer(Processor processor) throws Exception {
+                        return null;
+                    }
 
-                @Override
-                public boolean isLenientProperties() {
-                    return true;
-                }
-            };
+                    @Override
+                    public boolean isSingleton() {
+                        return true;
+                    }
+
+                    @Override
+                    public boolean isLenientProperties() {
+                        return true;
+                    }
+                };
+            } else {
+                return new DefaultEndpoint(uri, this) {
+                    @Override
+                    public Producer createProducer() throws Exception {
+                        return new CamelSipResponder(this, responseCode);
+                    }
+
+                    @Override
+                    public Consumer createConsumer(Processor processor) throws Exception {
+                        return null;
+                    }
+
+                    @Override
+                    public boolean isSingleton() {
+                        return true;
+                    }
+
+                    @Override
+                    public boolean isLenientProperties() {
+                        return true;
+                    }
+                };
+            }
         } else {
             return new DefaultEndpoint(uri, this) {
                 @Override
                 public Producer createProducer() throws Exception {
-                    return new CamelSipForwardingProducer(this, receivingHost, receivingPort, receivingTransport, responseCode);
+                    return new CamelSipForwardingProducer(this, receivingHost, receivingPort, receivingTransport);
                 }
 
                 @Override
@@ -221,14 +246,12 @@ public class SipComponent extends DefaultComponent {
         private final String _destinationHost;
         private final Integer _destinationPort;
         private final String _sendingTransport;
-        private final Integer _responseCode;
 
-        public CamelSipForwardingProducer(Endpoint endpoint, String destinationHost, Integer destinationPort, String transport, Integer responseCode) {
+        public CamelSipForwardingProducer(Endpoint endpoint, String destinationHost, Integer destinationPort, String transport) {
             super(endpoint);
             _destinationHost = destinationHost;
             _destinationPort = destinationPort;
             _sendingTransport = transport;
-            _responseCode = responseCode;
         }
 
         @Override
@@ -247,19 +270,10 @@ public class SipComponent extends DefaultComponent {
                 Request request = message.getMessage();
                 ServerTransaction serverTransaction = message.getTransaction();
 
-                // we may respond right here
-                if (_responseCode != null) {
-                    // let's respond
-                    Response response = _messageFactory.createResponse(_responseCode, request);
-                    System.out.println("**********SEND RESP BY CODE BEFORE FORWARD*************\n" + response.toString());
-                    serverTransaction.sendResponse(response);
-                }
-
                 // actual forwarding
                 // let's forward our request there
                 Request newRequest = (Request) request.clone();
 
-                // receiving = destination
                 // where? add a route there
                 SipURI destinationUri = _addressFactory.createSipURI(null, _destinationHost);
                 if (_destinationPort != null) {
@@ -312,18 +326,15 @@ public class SipComponent extends DefaultComponent {
 
     private class CamelSipProxyProducer extends DefaultProducer {
 
-        private final Integer _responseCode;
-
-        public CamelSipProxyProducer(Endpoint endpoint, Integer responseCode) {
+        public CamelSipProxyProducer(Endpoint endpoint) {
             super(endpoint);
-            _responseCode = responseCode;
         }
 
         @Override
         public void process(Exchange exchange) throws Exception {
             org.apache.camel.Message toSend = exchange.getIn();
             if (!(toSend instanceof CamelSipMessage)) {
-                //TODO: convert to sipmessage somehow and send
+                //TODO: convert to sipmessage somehow and still send
                 return;
             }
             CamelSipMessage message = (CamelSipMessage) toSend;
@@ -335,15 +346,7 @@ public class SipComponent extends DefaultComponent {
                 Request request = message.getMessage();
                 ServerTransaction serverTransaction = message.getTransaction();
 
-                // we may respond right here
-                if (_responseCode != null) {
-                    // let's respond
-                    Response response = _messageFactory.createResponse(_responseCode, request);
-                    System.out.println("**********SEND RESP BY CODE BEFORE PROXYING*************\n" + response.toString());
-                    serverTransaction.sendResponse(response);
-                }
-
-                // maybe it happens to be a known server transaction!
+                // maybe it happens to be a known server transaction! and we're cancelling it
                 if (request.getMethod().equals("CANCEL")) {
                     Set<ClientTransaction> clientTransactions = _serverClients.get(serverTransaction);
                     if (clientTransactions != null && !clientTransactions.isEmpty()) {
@@ -356,32 +359,39 @@ public class SipComponent extends DefaultComponent {
                             System.out.println("**********PROXYSEND CANCEL REQ*************\n" + cancelRequest.toString());
                             clientCancelTransaction.sendRequest();
                         }
+                    } else {
+                        System.out.println("**********NOTHINT TO CANCEL*************\n\n\n");
                     }
                 } else {
+                    // try to send along the route specified in request
                     RouteHeader routeHeader = (RouteHeader) request.getHeader(RouteHeader.NAME);
-                    SipURI routeUri = (SipURI) routeHeader.getAddress().getURI();
-                    ViaHeader viaHeader = _headerFactory.createViaHeader(_ourHost, routeUri.getPort(), routeUri.getTransportParam(), null);
+                    if (routeHeader == null) {
+                        System.out.println("**********NO PROXYSEND REQ NO ROUTE*************\n\n\n");
+                    } else {
+                        SipURI routeUri = (SipURI) routeHeader.getAddress().getURI();
+                        ViaHeader viaHeader = _headerFactory.createViaHeader(_ourHost, routeUri.getPort(), routeUri.getTransportParam(), null);
 
-                    SipURI recordRouteUri = _addressFactory.createSipURI(null, _ourHost);
-                    Address recordRouteAddress = _addressFactory.createAddress(null, recordRouteUri);
-                    recordRouteUri.setPort(routeUri.getPort());
-                    recordRouteUri.setLrParam();
-                    recordRouteUri.setTransportParam(routeUri.getTransportParam());
-                    RecordRouteHeader recordRoute = _headerFactory.createRecordRouteHeader(recordRouteAddress);
+                        SipURI recordRouteUri = _addressFactory.createSipURI(null, _ourHost);
+                        Address recordRouteAddress = _addressFactory.createAddress(null, recordRouteUri);
+                        recordRouteUri.setPort(routeUri.getPort());
+                        recordRouteUri.setLrParam();
+                        recordRouteUri.setTransportParam(routeUri.getTransportParam());
+                        RecordRouteHeader recordRoute = _headerFactory.createRecordRouteHeader(recordRouteAddress);
 
-                    // actual forwarding 
-                    Request newRequest = (Request) request.clone();
-                    newRequest.addFirst(viaHeader);
-                    newRequest.addHeader(recordRoute);
+                        // actual forwarding 
+                        Request newRequest = (Request) request.clone();
+                        newRequest.addFirst(viaHeader);
+                        newRequest.addHeader(recordRoute);
 
-                    ClientTransaction clientTransaction = message.getProvider().getNewClientTransaction(newRequest);
-                    //clientTransaction.setApplicationData(serverTransaction);
-                    _clientServer.put(clientTransaction, serverTransaction);
-                    _serverClients.get(serverTransaction).add(clientTransaction);
+                        ClientTransaction clientTransaction = message.getProvider().getNewClientTransaction(newRequest);
+                        //clientTransaction.setApplicationData(serverTransaction);
+                        _clientServer.put(clientTransaction, serverTransaction);
+                        _serverClients.get(serverTransaction).add(clientTransaction);
 
-                    // will use the transport specified in route header to send
-                    System.out.println("**********PROXYSEND REQ*************\n" + newRequest.toString());
-                    clientTransaction.sendRequest();
+                        // will use the transport specified in route header to send
+                        System.out.println("**********PROXYSEND REQ*************\n" + newRequest.toString());
+                        clientTransaction.sendRequest();
+                    }
                 }
             } else {
                 // it is a response to our previously forwarded request
@@ -394,7 +404,7 @@ public class SipComponent extends DefaultComponent {
                 ClientTransaction clientTransaction = message.getTransaction();
 
                 if (clientTransaction == null) {
-                    // send to the via address
+                    // send to the topmost via address
                     SipProvider sender = message.getProvider();
                     System.out.println("**********PROXYSEND RESP NONTRAN*******\n\n\n");
                     sender.sendResponse(newResponse);
@@ -409,6 +419,38 @@ public class SipComponent extends DefaultComponent {
 
         }
 
+    }
+
+    private class CamelSipResponder extends DefaultProducer {
+
+        private final Integer _responseCode;
+
+        public CamelSipResponder(Endpoint endpoint, Integer responseCode) {
+            super(endpoint);
+            _responseCode = responseCode;
+        }
+
+        @Override
+        public void process(Exchange exchange) throws Exception {
+            org.apache.camel.Message toSend = exchange.getIn();
+            if (!(toSend instanceof CamelSipMessage)) {
+                //TODO: convert to sipmessage somehow and still respond
+                return;
+            }
+            CamelSipMessage message = (CamelSipMessage) toSend;
+            if (message.isRequest()) {
+                Request request = message.getMessage();
+                ServerTransaction serverTransaction = message.getTransaction();
+
+                // we may respond right here
+                if (_responseCode != null) {
+                    // let's respond
+                    Response response = _messageFactory.createResponse(_responseCode, request);
+                    System.out.println("**********SEND RESP BY CODE*************\n" + response.toString());
+                    serverTransaction.sendResponse(response);
+                }
+            }
+        }
     }
 
     private class CamelSipConsumer implements Consumer {
@@ -428,19 +470,19 @@ public class SipComponent extends DefaultComponent {
             if (ret == null) {
                 try {
                     ListeningPoint lp = _sipStack.createListeningPoint(_ourHost, listeningPort, transport);
-                    
+
                     Iterator sps = _sipStack.getSipProviders();
-                    while(sps.hasNext()){
+                    while (sps.hasNext()) {
                         SipProvider tmpSp = (SipProvider) sps.next();
-                        try{
+                        try {
                             tmpSp.addListeningPoint(lp);
                             ret = tmpSp;
                             break;
-                        }catch(TransportAlreadySupportedException e){
-                            
+                        } catch (TransportAlreadySupportedException e) {
+
                         }
                     }
-                    if(ret==null){
+                    if (ret == null) {
                         ret = _sipStack.createSipProvider(lp);
                     }
                     _sipProvidersByPortAndTransport.put(key, ret);
@@ -546,12 +588,11 @@ public class SipComponent extends DefaultComponent {
             _transaction = transaction;
             _serverClients.put(transaction, new HashSet<>(5));
 
-            try{
-                ((ViaHeader)request.getHeader(Via.NAME)).setReceived(_ourHost);
-            }catch(ParseException e){
-                throw new RuntimeException(e);
-            }
-            
+//            try {
+//                ((ViaHeader) request.getHeader(Via.NAME)).setReceived(_ourHost);
+//            } catch (ParseException e) {
+//                throw new RuntimeException(e);
+//            }
             super.setBody(request);
         }
 
@@ -636,5 +677,39 @@ public class SipComponent extends DefaultComponent {
 
         }
 
+    }
+
+    /**
+     *
+     * @param args host server:port
+     * @throws Exception
+     */
+    public static void main(String[] args) throws Exception {
+
+        String ourHostIp = args[0];
+        String sipServer = args[1];
+
+        CamelContext camelContext = new DefaultCamelContext();
+        camelContext.addComponent("sip", new SipComponent(camelContext, ourHostIp, "gov.nist", null, null));
+
+        camelContext.addRoutes(new RouteBuilder(camelContext) {
+            @Override
+            public void configure() throws Exception {
+
+                from("sip:udp://0.0.0.0:5060").to("direct:dispatcher");
+
+                from("sip:ws://0.0.0.0:6060").to("direct:dispatcher");
+
+                from("direct:dispatcher").choice()
+                        .when().mvel("exchange.in.isRequest() && exchange.in.body.method=='REGISTER'").to("sip:udp://" + sipServer).endChoice()
+                        .when().mvel("exchange.in.isRequest() && exchange.in.body.method=='INVITE'").to("sip:respond?code=100").to("sip:udp://" + sipServer).endChoice()
+                        .when().mvel("exchange.in.isResponse() && exchange.in.body.statusCode==100").to("stub:nowhere").endChoice()
+                        .otherwise().to("sip:proxy");
+
+//                from("direct:location").choice()
+//                        .when().mvel("")
+            }
+        });
+        camelContext.start();
     }
 }
