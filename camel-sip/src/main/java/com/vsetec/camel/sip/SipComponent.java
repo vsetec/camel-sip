@@ -224,7 +224,7 @@ public class SipComponent extends DefaultComponent {
 
                 @Override
                 public Consumer createConsumer(Processor processor) throws Exception {
-                    return new CamelSipConsumer(this, receivingHost, receivingPort, receivingTransport, responseCode, processor);
+                    return new CamelSipConsumer(this, receivingHost, receivingPort, receivingTransport, processor);
                 }
 
                 @Override
@@ -456,12 +456,10 @@ public class SipComponent extends DefaultComponent {
     private class CamelSipConsumer implements Consumer {
 
         private final Endpoint _endpoint;
-        private final Integer _responseCode;
         private final SipProvider _sipProvider;
         private final CamelSipConsumerProcessor _wrappingProcessor;
 
-        public CamelSipConsumer(Endpoint endpoint, String listeningHost, Integer listeningPort, String transport, Integer responseCode, Processor processor) {
-            _responseCode = responseCode;
+        public CamelSipConsumer(Endpoint endpoint, String listeningHost, Integer listeningPort, String transport, Processor processor) {
             _endpoint = endpoint;
 
             String key = transport + ":" + listeningPort;
@@ -494,28 +492,12 @@ public class SipComponent extends DefaultComponent {
             }
             _sipProvider = ret;
 
-            if (_responseCode == null) {
-                _wrappingProcessor = new CamelSipConsumerProcessor(endpoint) {
-                    @Override
-                    public void process(Exchange exchange) throws Exception {
-                        processor.process(exchange);
-                    }
-                };
-            } else {
-                _wrappingProcessor = new CamelSipConsumerProcessor(endpoint) {
-                    @Override
-                    public void process(Exchange exchange) throws Exception {
-                        CamelSipMessage message = (CamelSipMessage) exchange.getIn();
-                        if (message.isRequest()) {
-                            Response response = _messageFactory.createResponse(_responseCode, message.getMessage());
-                            System.out.println("**********SEND RESP BY CODE UPON RECV*************\n" + response.toString());
-                            ((ServerTransaction) message.getTransaction()).sendResponse(response);
-
-                        }
-                        processor.process(exchange);
-                    }
-                };
-            }
+            _wrappingProcessor = new CamelSipConsumerProcessor(endpoint) {
+                @Override
+                public void process(Exchange exchange) throws Exception {
+                    processor.process(exchange);
+                }
+            };
         }
 
         @Override
