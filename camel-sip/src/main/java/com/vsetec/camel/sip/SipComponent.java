@@ -17,10 +17,16 @@ package com.vsetec.camel.sip;
 
 import gov.nist.javax.sip.stack.NioMessageProcessorFactory;
 import java.net.URISyntaxException;
+import java.text.ParseException;
+import java.time.Instant;
+import java.util.ArrayList;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Iterator;
+import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Properties;
 import java.util.Set;
 import java.util.TooManyListenersException;
@@ -35,6 +41,7 @@ import javax.sip.PeerUnavailableException;
 import javax.sip.RequestEvent;
 import javax.sip.ResponseEvent;
 import javax.sip.ServerTransaction;
+import javax.sip.SipException;
 import javax.sip.SipFactory;
 import javax.sip.SipListener;
 import javax.sip.SipProvider;
@@ -49,6 +56,8 @@ import javax.sip.TransportNotSupportedException;
 import javax.sip.address.Address;
 import javax.sip.address.AddressFactory;
 import javax.sip.address.SipURI;
+import javax.sip.header.ContactHeader;
+import javax.sip.header.FromHeader;
 import javax.sip.header.HeaderFactory;
 import javax.sip.header.RecordRouteHeader;
 import javax.sip.header.RouteHeader;
@@ -82,6 +91,10 @@ public class SipComponent extends DefaultComponent {
     private final Map<String, SipProvider> _sipProvidersByPortAndTransport = new HashMap<>(3);
     private final Map<ServerTransaction, Set<ClientTransaction>> _serverClients = new HashMap<>();
     private final Map<ClientTransaction, ServerTransaction> _clientServer = new HashMap<>();
+    private final Map<String, Set<CamelSipRegistryItem>> _registeredNameRegistry = new HashMap<>(); // registered name - regitem
+    private final Map<String, CamelSipRegistryItem> _selfNameRegistry = new HashMap<>(); // self proclaimed name - regitems
+    private final Map<Dialog, Dialog> _clientServerDialog = new HashMap<>();
+    private final Map<Dialog, List<Dialog>> _serverClientDialogs = new HashMap<>();
     private final CamelSipListener _listener = new CamelSipListener();
     private final String _ourHost;
     private final HeaderFactory _headerFactory;
@@ -131,6 +144,270 @@ public class SipComponent extends DefaultComponent {
 
     public MessageFactory getMessageFactory() {
         return _messageFactory;
+    }
+
+    private boolean _tryRedirectRequestToAnotherDialog(SipProvider receivingProvider, ServerTransaction serverTransaction, Request request) throws InvalidArgumentException, SipException, ParseException {
+        Dialog serverDialog = serverTransaction.getDialog();
+        if (serverDialog != null) {
+            List<Dialog> clientDialogs = _serverClientDialogs.get(serverDialog);
+            boolean sent = false;
+
+            // ack?
+            if (request.getMethod().equals(Request.ACK)) {
+                for (Dialog clientDialog : clientDialogs) {
+                    Request newRequest = clientDialog.createAck(clientDialog.getLocalSeqNumber());
+                    System.out.println("**********DIALOG SEND ACK***********\n" + newRequest.toString());
+                    clientDialog.sendAck(newRequest);
+                    sent = true;
+                }
+                return sent;
+
+            } else { // something different. 
+                for (Dialog clientDialog : clientDialogs) {
+
+                    _redirectRequestToSpecificAddress(receivingProvider, serverTransaction, request, (SipURI) clientDialog.getRemoteParty().getURI());
+                    sent = true;
+
+                }
+                return sent;
+            }
+
+        }
+
+        return false;
+    }
+
+    private boolean _tryRedirectResponseToInitialSender(ClientTransaction clientTransaction, Response response) throws SipException, InvalidArgumentException {
+        // as it is a response originated here, we can get a server transaction
+        ServerTransaction serverTransaction = _clientServer.get(clientTransaction);
+        if (serverTransaction == null) {
+            return false;
+        }
+
+        Response newResponse = (Response) response.clone();
+        newResponse.removeFirst(ViaHeader.NAME);
+
+        // actual forwarding 
+        // what if it is a register?
+        _register(serverTransaction, response, clientTransaction);
+        System.out.println("**********PROXY SEND RESP***********\n" + newResponse.toString());
+        serverTransaction.sendResponse(newResponse);
+        return true;
+    }
+
+    private void _bindDialogs(Dialog serverDialog, List<Dialog> clientDialogs) {
+
+        for (Dialog clientDialog : clientDialogs) {
+            _clientServerDialog.put(clientDialog, serverDialog);
+        }
+
+        List<Dialog> existingClientDialogs = _serverClientDialogs.get(serverDialog);
+        if (existingClientDialogs == null) {
+            existingClientDialogs = new ArrayList<>(clientDialogs);
+            _serverClientDialogs.put(serverDialog, existingClientDialogs);
+        } else {
+            existingClientDialogs.addAll(clientDialogs);
+        }
+
+    }
+
+    private boolean _tryRedirectInviteRequest(SipProvider receivingProvider, ServerTransaction serverTransaction, Request request) throws ParseException, SipException, InvalidArgumentException {
+        if (request.getMethod().equals(Request.INVITE)) {
+
+            SipURI toWhom = (SipURI) request.getRequestURI();
+            // if it is a real address, redirect there
+            CamelSipRegistryItem reg = _selfNameRegistry.get(toWhom.toString());
+            if (reg != null) {
+                ClientTransaction clientTransaction = _redirectRequestToSpecificAddress(receivingProvider, serverTransaction, request, toWhom);
+                Dialog serverDialog = serverTransaction.getDialog();
+                Dialog clientDialog = clientTransaction.getDialog();
+                _bindDialogs(serverDialog, Collections.singletonList(clientDialog));
+                return true;
+            }
+
+            // no such phone registered. redirect to registrar IF it is a known phone calling
+            // redirecting to it's own registrar
+            ContactHeader contact = (ContactHeader) request.getHeader(ContactHeader.NAME);
+            SipURI fromWhom = (SipURI) contact.getAddress().getURI();
+            CamelSipRegistryItem myReg = _selfNameRegistry.get(fromWhom.toString());
+            if (myReg != null) {
+
+                if (myReg._registrarUri != null) {
+                    ClientTransaction clientTransaction = _redirectRequestToSpecificAddress(receivingProvider, serverTransaction, request, myReg._registrarUri);
+                    Dialog serverDialog = serverTransaction.getDialog();
+                    Dialog clientDialog = clientTransaction.getDialog();
+                    _bindDialogs(serverDialog, Collections.singletonList(clientDialog));
+                    return true;
+                } else {
+
+                    // WE are the caller phone registrar! we have to look in our own records
+                    Set<CamelSipRegistryItem> regs = _registeredNameRegistry.get(toWhom.toString());
+                    Dialog serverDialog = serverTransaction.getDialog();
+                    List<Dialog> clientDialogs = new ArrayList<>(3);
+                    for (CamelSipRegistryItem reg1 : regs) {
+
+                        if (reg1._registrarUri == null && reg1._validTill.isAfter(Instant.now())) {
+
+                            ClientTransaction clientTransaction = _redirectRequestToSpecificAddress(receivingProvider, serverTransaction, request, reg1._phoneRealAddress);
+                            Dialog clientDialog = clientTransaction.getDialog();
+                            clientDialogs.add(clientDialog);
+
+                        }
+
+                    }
+
+                    if (clientDialogs.isEmpty()) {
+                        return false;
+                    }
+
+                    _bindDialogs(serverDialog, clientDialogs);
+                    return true;
+
+                }
+            }
+
+        }
+
+        return false;
+
+    }
+
+    private ClientTransaction _redirectRequestToSpecificAddress(SipProvider receivingProvider, ServerTransaction serverTransaction, Request request, SipURI destinationSipUri) throws ParseException, SipException, InvalidArgumentException {
+        // actual forwarding
+        // let's forward our request there
+        Request newRequest = (Request) request.clone();
+
+        // where? add a route there
+        Address destinationAddress = _addressFactory.createAddress(null, destinationSipUri);
+        RouteHeader routeHeader = _headerFactory.createRouteHeader(destinationAddress);
+        newRequest.addFirst(routeHeader);
+
+        // where from? add a via and a record-route
+        ListeningPoint listeningPoint = receivingProvider.getListeningPoint(destinationSipUri.getTransportParam());
+        int responseListeningPort = listeningPoint.getPort();
+
+        ViaHeader viaHeader = _headerFactory.createViaHeader(_ourHost, responseListeningPort, destinationSipUri.getTransportParam(), null);
+        newRequest.addFirst(viaHeader);
+
+        SipURI recordRouteUri = _addressFactory.createSipURI(null, _ourHost);
+        Address recordRouteAddress = _addressFactory.createAddress(null, recordRouteUri);
+        recordRouteUri.setPort(responseListeningPort);
+        recordRouteUri.setLrParam();
+        recordRouteUri.setTransportParam(destinationSipUri.getTransportParam());
+        RecordRouteHeader recordRoute = _headerFactory.createRecordRouteHeader(recordRouteAddress);
+        newRequest.addHeader(recordRoute);
+
+        // will use the transport specified in route header to send
+        ClientTransaction clientTransaction = receivingProvider.getNewClientTransaction(newRequest);
+
+        // remember the server transaction, to forward back the responses
+        //clientTransaction.setApplicationData(serverTransaction);
+        _clientServer.put(clientTransaction, serverTransaction);
+        _serverClients.get(serverTransaction).add(clientTransaction);
+
+        System.out.println("**********FWD REQ*************\n" + newRequest.toString());
+        clientTransaction.sendRequest();
+        return clientTransaction;
+    }
+
+    private boolean _register(ServerTransaction serverTransaction, Response response, ClientTransaction clientTransaction) {
+        // I am a server. I received a request and have to send a response
+        Request requestWeveReceived = serverTransaction.getRequest();
+
+        if (response.getStatusCode() == 200) { //we are okaying some request
+            if (requestWeveReceived.getMethod().equals(Request.REGISTER)) { // and it is a register request!
+
+                // remember this phone for future proxying
+                String registeredName = ((FromHeader) requestWeveReceived.getHeader(FromHeader.NAME)).getAddress().getURI().toString();
+                SipURI selfProclaimedName = (SipURI) ((ContactHeader) requestWeveReceived.getHeader(ContactHeader.NAME)).getAddress().getURI();
+                int expires = ((ContactHeader) requestWeveReceived.getHeader(ContactHeader.NAME)).getExpires();
+
+                SipURI registrarAddress;
+
+                // was it a proxified register request? or we processed it ourselves
+                // in other words, is it a response we have created, or the one we're proxying
+                if (clientTransaction != null) {
+                    // we are proxying. there is an actual registrar out there
+                    Request registerRequestWeveSent = clientTransaction.getRequest();
+                    // get the registrar address from the topmost Route header that we created
+                    RouteHeader route = (RouteHeader) registerRequestWeveSent.getHeader(RouteHeader.NAME);
+                    registrarAddress = (SipURI) route.getAddress().getURI();
+
+                } else {
+                    // we aren't proxying. we decided to register ourselves
+                    registrarAddress = null;
+                }
+
+                Set<CamelSipRegistryItem> items;
+                synchronized (_registeredNameRegistry) {
+                    items = _registeredNameRegistry.get(registeredName);
+                    if (items == null) {
+                        items = new HashSet<>(4);
+                    }
+                }
+                CamelSipRegistryItem item = new CamelSipRegistryItem(registrarAddress, registeredName, selfProclaimedName, expires);
+                synchronized (items) {
+                    System.out.println("**********REGISTER***********\nregistrar: " + registrarAddress == null ? "<this server>" : registrarAddress
+                            + "\nregisteredName: " + registeredName
+                            + "\nunder name of: " + selfProclaimedName.toString()
+                            + "\nexpiring in sec: " + expires + "\n\n");
+                    items.add(item);
+                }
+                _selfNameRegistry.put(selfProclaimedName.toString(), item);
+
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private class CamelSipRegistryItem {
+
+        private final SipURI _registrarUri; // whom have we registered this with
+        private final String _phoneOfficialAddress; // from from/to field
+        private final SipURI _phoneRealAddress; // from contact field
+        private final Instant _validTill; // from response Expires header
+
+        public CamelSipRegistryItem(SipURI registrarUri, String phoneOfficialAddress, SipURI phoneRealAddress, int secondsToLive) {
+            this._registrarUri = registrarUri;
+            this._phoneOfficialAddress = phoneOfficialAddress;
+            this._phoneRealAddress = phoneRealAddress;
+            this._validTill = Instant.ofEpochMilli(System.currentTimeMillis() + secondsToLive * 1000);
+        }
+
+        @Override
+        public int hashCode() {
+            int hash = 3;
+            hash = 37 * hash + Objects.hashCode(this._registrarUri.toString());
+            hash = 37 * hash + Objects.hashCode(this._phoneOfficialAddress);
+            hash = 37 * hash + Objects.hashCode(this._phoneRealAddress.toString());
+            return hash;
+        }
+
+        @Override
+        public boolean equals(Object obj) {
+            if (this == obj) {
+                return true;
+            }
+            if (obj == null) {
+                return false;
+            }
+            if (getClass() != obj.getClass()) {
+                return false;
+            }
+            final CamelSipRegistryItem other = (CamelSipRegistryItem) obj;
+            if (!Objects.equals(this._registrarUri.toString(), other._registrarUri.toString())) {
+                return false;
+            }
+            if (!Objects.equals(this._phoneOfficialAddress, other._phoneOfficialAddress)) {
+                return false;
+            }
+            if (!Objects.equals(this._phoneRealAddress.toString(), other._phoneRealAddress.toString())) {
+                return false;
+            }
+            return true;
+        }
+
     }
 
     @Override
@@ -270,47 +547,14 @@ public class SipComponent extends DefaultComponent {
                 Request request = message.getMessage();
                 ServerTransaction serverTransaction = message.getTransaction();
 
-                // actual forwarding
-                // let's forward our request there
-                Request newRequest = (Request) request.clone();
-
-                // where? add a route there
                 SipURI destinationUri = _addressFactory.createSipURI(null, _destinationHost);
                 if (_destinationPort != null) {
                     destinationUri.setPort(_destinationPort);
                 }
                 destinationUri.setLrParam();
                 destinationUri.setTransportParam(_sendingTransport);
-                Address destinationAddress = _addressFactory.createAddress(null, destinationUri);
-                RouteHeader routeHeader = _headerFactory.createRouteHeader(destinationAddress);
-                newRequest.addFirst(routeHeader);
 
-                // where from? add a via and a record-route
-                SipProvider receivingProvider = message.getProvider();
-                ListeningPoint listeningPoint = receivingProvider.getListeningPoint(_sendingTransport);
-                int responseListeningPort = listeningPoint.getPort();
-
-                ViaHeader viaHeader = _headerFactory.createViaHeader(_ourHost, responseListeningPort, _sendingTransport, null);
-                newRequest.addFirst(viaHeader);
-
-                SipURI recordRouteUri = _addressFactory.createSipURI(null, _ourHost);
-                Address recordRouteAddress = _addressFactory.createAddress(null, recordRouteUri);
-                recordRouteUri.setPort(responseListeningPort);
-                recordRouteUri.setLrParam();
-                recordRouteUri.setTransportParam(_sendingTransport);
-                RecordRouteHeader recordRoute = _headerFactory.createRecordRouteHeader(recordRouteAddress);
-                newRequest.addHeader(recordRoute);
-
-                // will use the transport specified in route header to send
-                ClientTransaction clientTransaction = receivingProvider.getNewClientTransaction(newRequest);
-
-                // remember the server transaction, to forward back the responses
-                //clientTransaction.setApplicationData(serverTransaction);
-                _clientServer.put(clientTransaction, serverTransaction);
-                _serverClients.get(serverTransaction).add(clientTransaction);
-
-                System.out.println("**********FWD REQ*************\n" + newRequest.toString());
-                clientTransaction.sendRequest();
+                _redirectRequestToSpecificAddress(message.getProvider(), serverTransaction, request, destinationUri);
 
             } else {
                 // let's forward our response there
@@ -363,56 +607,65 @@ public class SipComponent extends DefaultComponent {
                         System.out.println("**********NOTHINT TO CANCEL*************\n\n\n");
                     }
                 } else {
-                    // try to send along the route specified in request
-                    RouteHeader routeHeader = (RouteHeader) request.getHeader(RouteHeader.NAME);
-                    if (routeHeader == null) {
-                        System.out.println("**********NO PROXYSEND REQ NO ROUTE*************\n\n\n");
-                    } else {
-                        SipURI routeUri = (SipURI) routeHeader.getAddress().getURI();
-                        ViaHeader viaHeader = _headerFactory.createViaHeader(_ourHost, routeUri.getPort(), routeUri.getTransportParam(), null);
 
-                        SipURI recordRouteUri = _addressFactory.createSipURI(null, _ourHost);
-                        Address recordRouteAddress = _addressFactory.createAddress(null, recordRouteUri);
-                        recordRouteUri.setPort(routeUri.getPort());
-                        recordRouteUri.setLrParam();
-                        recordRouteUri.setTransportParam(routeUri.getTransportParam());
-                        RecordRouteHeader recordRoute = _headerFactory.createRecordRouteHeader(recordRouteAddress);
+                    SipProvider receivingProvider = message.getProvider();
 
-                        // actual forwarding 
-                        Request newRequest = (Request) request.clone();
-                        newRequest.addFirst(viaHeader);
-                        newRequest.addHeader(recordRoute);
+                    boolean redirected = _tryRedirectInviteRequest(receivingProvider, serverTransaction, request);
 
-                        ClientTransaction clientTransaction = message.getProvider().getNewClientTransaction(newRequest);
-                        //clientTransaction.setApplicationData(serverTransaction);
-                        _clientServer.put(clientTransaction, serverTransaction);
-                        _serverClients.get(serverTransaction).add(clientTransaction);
+                    if (!redirected) {
+                        redirected = _tryRedirectRequestToAnotherDialog(receivingProvider, serverTransaction, request);
+                    }
 
-                        // will use the transport specified in route header to send
-                        System.out.println("**********PROXYSEND REQ*************\n" + newRequest.toString());
-                        clientTransaction.sendRequest();
+                    if (!redirected) {
+                        // try to send along the route specified in request
+                        RouteHeader routeHeader = (RouteHeader) request.getHeader(RouteHeader.NAME);
+                        if (routeHeader == null) {
+                            System.out.println("**********NO PROXYSEND REQ NO ROUTE*************\n\n\n");
+                        } else {
+                            Address destinationAddress = routeHeader.getAddress();
+                            SipURI routeUri = (SipURI) destinationAddress.getURI();
+                            ViaHeader viaHeader = _headerFactory.createViaHeader(_ourHost, routeUri.getPort(), routeUri.getTransportParam(), null);
+
+                            SipURI recordRouteUri = _addressFactory.createSipURI(null, _ourHost);
+                            Address recordRouteAddress = _addressFactory.createAddress(null, recordRouteUri);
+                            recordRouteUri.setPort(routeUri.getPort());
+                            recordRouteUri.setLrParam();
+                            recordRouteUri.setTransportParam(routeUri.getTransportParam());
+                            RecordRouteHeader recordRoute = _headerFactory.createRecordRouteHeader(recordRouteAddress);
+
+                            // actual forwarding 
+                            Request newRequest = (Request) request.clone();
+                            newRequest.addFirst(viaHeader);
+                            newRequest.addHeader(recordRoute);
+
+                            ClientTransaction clientTransaction = message.getProvider().getNewClientTransaction(newRequest);
+                            _clientServer.put(clientTransaction, serverTransaction);
+                            _serverClients.get(serverTransaction).add(clientTransaction);
+
+                            // will use the transport specified in route header to send
+                            System.out.println("**********PROXYSEND REQ*************\n" + newRequest.toString());
+                            clientTransaction.sendRequest();
+                        }
                     }
                 }
             } else {
                 // it is a response to our previously forwarded request
                 Response response = message.getMessage();
-                Response newResponse = (Response) response.clone();
-                newResponse.removeFirst(ViaHeader.NAME);
-
-                // actual forwarding 
-                // as it is a response originated here, we can get a server transaction
                 ClientTransaction clientTransaction = message.getTransaction();
 
-                if (clientTransaction == null) {
+                boolean redirected = _tryRedirectResponseToInitialSender(clientTransaction, response);
+
+                if (!redirected) {
+
+                    Response newResponse = (Response) response.clone();
+                    newResponse.removeFirst(ViaHeader.NAME);
+
+                    // actual forwarding 
                     // send to the topmost via address
                     SipProvider sender = message.getProvider();
                     System.out.println("**********PROXYSEND RESP NONTRAN*******\n\n\n");
                     sender.sendResponse(newResponse);
-                } else {
-                    //ServerTransaction serverTransaction = (ServerTransaction) clientTransaction.getApplicationData();
-                    ServerTransaction serverTransaction = _clientServer.get(clientTransaction);
-                    System.out.println("**********PROXYSEND RESP TRAN***********\n" + newResponse.toString());
-                    serverTransaction.sendResponse(newResponse);
+
                 }
 
             }
@@ -624,6 +877,7 @@ public class SipComponent extends DefaultComponent {
 
         @Override
         public void processResponse(ResponseEvent event) {
+
             SipProvider originatingProvider = (SipProvider) event.getSource();
             for (CamelSipConsumerProcessor processor : _providerProcessors.get(originatingProvider)) {
                 processor._processResponseEvent(event);
@@ -656,7 +910,14 @@ public class SipComponent extends DefaultComponent {
 
         @Override
         public void processDialogTerminated(DialogTerminatedEvent dialogTerminatedEvent) {
-
+            Dialog dialog = dialogTerminatedEvent.getDialog();
+            if (dialog.isServer()) {
+                List<Dialog> removed = _serverClientDialogs.remove(dialog);
+                _clientServerDialog.keySet().removeAll(removed);
+            } else {
+                Dialog removed = _clientServerDialog.remove(dialog);
+                _serverClientDialogs.remove(removed);
+            }
         }
 
     }
