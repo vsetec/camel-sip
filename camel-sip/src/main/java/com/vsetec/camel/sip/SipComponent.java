@@ -20,6 +20,7 @@ import java.net.URISyntaxException;
 import java.text.ParseException;
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -189,7 +190,7 @@ public class SipComponent extends DefaultComponent {
 
         // actual forwarding 
         // what if it is a register?
-        _register(serverTransaction, response, clientTransaction);
+        _register(serverTransaction, newResponse, clientTransaction);
         System.out.println("**********PROXY SEND RESP***********\n" + newResponse.toString());
         serverTransaction.sendResponse(newResponse);
         return true;
@@ -218,6 +219,8 @@ public class SipComponent extends DefaultComponent {
             // if it is a real address, redirect there
             CamelSipRegistryItem reg = _selfNameRegistry.get(toWhom.toString());
             if (reg != null) {
+                toWhom = (SipURI) toWhom.clone();
+                toWhom.setTransportParam(reg._transportToReach);
                 ClientTransaction clientTransaction = _redirectRequestToSpecificAddress(receivingProvider, serverTransaction, request, toWhom);
                 Dialog serverDialog = serverTransaction.getDialog();
                 Dialog clientDialog = clientTransaction.getDialog();
@@ -321,6 +324,8 @@ public class SipComponent extends DefaultComponent {
                 String registeredName = ((FromHeader) requestWeveReceived.getHeader(FromHeader.NAME)).getAddress().getURI().toString();
                 SipURI selfProclaimedName = (SipURI) ((ContactHeader) requestWeveReceived.getHeader(ContactHeader.NAME)).getAddress().getURI();
                 int expires = ((ContactHeader) requestWeveReceived.getHeader(ContactHeader.NAME)).getExpires();
+                //requestWeveReceived.get
+                //serverTransaction.
 
                 SipURI registrarAddress;
 
@@ -345,9 +350,12 @@ public class SipComponent extends DefaultComponent {
                         items = new HashSet<>(4);
                     }
                 }
-                CamelSipRegistryItem item = new CamelSipRegistryItem(registrarAddress, registeredName, selfProclaimedName, expires);
+
+                String transport = ((ViaHeader) response.getHeader(ViaHeader.NAME)).getTransport();
+
+                CamelSipRegistryItem item = new CamelSipRegistryItem(registrarAddress, registeredName, selfProclaimedName, expires, transport);
                 synchronized (items) {
-                    System.out.println("**********REGISTER***********\nregistrar: " + registrarAddress == null ? "<this server>" : registrarAddress
+                    System.out.println("**********REGISTER***********\nregistrar: " + (registrarAddress == null ? "<this server>" : registrarAddress)
                             + "\nregisteredName: " + registeredName
                             + "\nunder name of: " + selfProclaimedName.toString()
                             + "\nexpiring in sec: " + expires + "\n\n");
@@ -367,12 +375,14 @@ public class SipComponent extends DefaultComponent {
         private final String _phoneOfficialAddress; // from from/to field
         private final SipURI _phoneRealAddress; // from contact field
         private final Instant _validTill; // from response Expires header
+        private final String _transportToReach;
 
-        public CamelSipRegistryItem(SipURI registrarUri, String phoneOfficialAddress, SipURI phoneRealAddress, int secondsToLive) {
+        public CamelSipRegistryItem(SipURI registrarUri, String phoneOfficialAddress, SipURI phoneRealAddress, int secondsToLive, String transport) {
             this._registrarUri = registrarUri;
             this._phoneOfficialAddress = phoneOfficialAddress;
             this._phoneRealAddress = phoneRealAddress;
             this._validTill = Instant.ofEpochMilli(System.currentTimeMillis() + secondsToLive * 1000);
+            _transportToReach = transport;
         }
 
         @Override
@@ -417,14 +427,63 @@ public class SipComponent extends DefaultComponent {
         final String receivingHost;
         final String receivingTransport;
         final Integer receivingPort;
-        final Integer responseCode;
 
-        String responseCodeString = (String) endpointParams.get("code");
-        if (responseCodeString == null) {
-            responseCode = null;
-        } else {
-            responseCode = Integer.parseInt(responseCodeString);
+        final Set<Integer> responseCodes;
+        final Set<String> requestMethods;
+        final Set<Integer> responseCodesNot;
+        final Set<String> requestMethodsNot;
+
+        {
+            Object reqMethod = endpointParams.get("requestMethod");
+            if (reqMethod instanceof String) {
+                requestMethods = Collections.singleton((String) reqMethod);
+            } else if (reqMethod instanceof List) {
+                requestMethods = new HashSet((List<String>) reqMethod);
+            } else {
+                requestMethods = null;
+            }
         }
+        {
+            Object reqMethod = endpointParams.get("requestMethodNot");
+            if (reqMethod instanceof String) {
+                requestMethodsNot = Collections.singleton((String) reqMethod);
+            } else if (reqMethod instanceof List) {
+                requestMethodsNot = new HashSet((List<String>) reqMethod);
+            } else {
+                requestMethodsNot = null;
+            }
+        }
+        {
+            Object respCode = endpointParams.get("responseCode");
+            if (respCode instanceof String) {
+                responseCodes = Collections.singleton(Integer.parseInt((String) respCode));
+            } else if (respCode instanceof List) {
+                List rcList = (List) respCode;
+                Integer[] rcs = new Integer[rcList.size()];
+                for (int i = 0; i < rcs.length; i++) {
+                    rcs[i] = Integer.parseInt((String) rcList.get(i));
+                }
+                responseCodes = new HashSet(Arrays.asList(rcs));
+            } else {
+                responseCodes = null;
+            }
+        }
+        {
+            Object respCode = endpointParams.get("responseCodeNot");
+            if (respCode instanceof String) {
+                responseCodesNot = Collections.singleton(Integer.parseInt((String) respCode));
+            } else if (respCode instanceof List) {
+                List rcList = (List) respCode;
+                Integer[] rcs = new Integer[rcList.size()];
+                for (int i = 0; i < rcs.length; i++) {
+                    rcs[i] = Integer.parseInt((String) rcList.get(i));
+                }
+                responseCodesNot = new HashSet<>(Arrays.asList(rcs));
+            } else {
+                responseCodesNot = null;
+            }
+        }
+
         if (remaining.startsWith("proxy") || remaining.startsWith("respond")) {
             receivingHost = null;
             receivingTransport = null;
@@ -447,7 +506,7 @@ public class SipComponent extends DefaultComponent {
 
         if (receivingHost == null) {
 
-            if (responseCode == null) {
+            if (responseCodes == null || responseCodes.isEmpty()) {
                 return new DefaultEndpoint(uri, this) {
                     @Override
                     public Producer createProducer() throws Exception {
@@ -473,7 +532,7 @@ public class SipComponent extends DefaultComponent {
                 return new DefaultEndpoint(uri, this) {
                     @Override
                     public Producer createProducer() throws Exception {
-                        return new CamelSipResponder(this, responseCode);
+                        return new CamelSipResponder(this, responseCodes.iterator().next());
                     }
 
                     @Override
@@ -501,7 +560,16 @@ public class SipComponent extends DefaultComponent {
 
                 @Override
                 public Consumer createConsumer(Processor processor) throws Exception {
-                    return new CamelSipConsumer(this, receivingHost, receivingPort, receivingTransport, processor);
+                    return new CamelSipConsumer(
+                            this,
+                            receivingHost,
+                            receivingPort,
+                            receivingTransport,
+                            processor,
+                            requestMethods,
+                            requestMethodsNot,
+                            responseCodes,
+                            responseCodesNot);
                 }
 
                 @Override
@@ -712,7 +780,16 @@ public class SipComponent extends DefaultComponent {
         private final SipProvider _sipProvider;
         private final CamelSipConsumerProcessor _wrappingProcessor;
 
-        public CamelSipConsumer(Endpoint endpoint, String listeningHost, Integer listeningPort, String transport, Processor processor) {
+        public CamelSipConsumer(
+                Endpoint endpoint,
+                String listeningHost,
+                Integer listeningPort,
+                String transport,
+                Processor processor,
+                Set<String> requestMethods,
+                Set<String> requestMethodsNot,
+                Set<Integer> responseCodes,
+                Set<Integer> responseCodesNot) {
             _endpoint = endpoint;
 
             String key = transport + ":" + listeningPort;
@@ -745,7 +822,7 @@ public class SipComponent extends DefaultComponent {
             }
             _sipProvider = ret;
 
-            _wrappingProcessor = new CamelSipConsumerProcessor(endpoint) {
+            _wrappingProcessor = new CamelSipConsumerProcessor(endpoint, requestMethods, requestMethodsNot, responseCodes, responseCodesNot) {
                 @Override
                 public void process(Exchange exchange) throws Exception {
                     processor.process(exchange);
@@ -773,32 +850,52 @@ public class SipComponent extends DefaultComponent {
     private abstract class CamelSipConsumerProcessor implements Processor {
 
         private final Endpoint _endpoint;
+        private final Set<String> _requestMethods;
+        private final Set<String> _requestMethodsNot;
+        private final Set<Integer> _responseCodes;
+        private final Set<Integer> _responseCodesNot;
 
-        private CamelSipConsumerProcessor(Endpoint endpoint) {
+        private CamelSipConsumerProcessor(Endpoint endpoint, Set<String> requestMethods, Set<String> requestMethodsNot, Set<Integer> responseCodes, Set<Integer> responseCodesNot) {
             _endpoint = endpoint;
+            _requestMethods = requestMethods;
+            _requestMethodsNot = requestMethodsNot;
+            _responseCodes = responseCodes;
+            _responseCodesNot = responseCodesNot;
         }
 
         private void _processRequestEvent(RequestEvent event) {
-            try {
-                System.out.println("**********RECV REQ*************\n" + event.getRequest().toString());
-                Exchange exchange = new DefaultExchange(_endpoint);
-                CamelSipMessage in = new CamelSipMessage(getCamelContext(), event);
-                exchange.setIn(in);
-                process(exchange);
-            } catch (Exception e) {
-                throw new RuntimeException(e);
+            if (_requestMethods == null || _requestMethods.contains(event.getRequest().getMethod())) {
+                if (_requestMethodsNot == null || !_requestMethodsNot.contains(event.getRequest().getMethod())) {
+                    if (_responseCodes == null) {
+                        try {
+                            System.out.println("**********RECV REQ*************\n" + event.getRequest().toString());
+                            Exchange exchange = new DefaultExchange(_endpoint);
+                            CamelSipMessage in = new CamelSipMessage(getCamelContext(), event);
+                            exchange.setIn(in);
+                            process(exchange);
+                        } catch (Exception e) {
+                            throw new RuntimeException(e);
+                        }
+                    }
+                }
             }
         }
 
         private void _processResponseEvent(ResponseEvent event) {
-            try {
-                System.out.println("**********RECV RESP*************\n" + event.getResponse().toString());
-                Exchange exchange = new DefaultExchange(_endpoint);
-                CamelSipMessage in = new CamelSipMessage(getCamelContext(), event);
-                exchange.setIn(in);
-                process(exchange);
-            } catch (Exception e) {
-                throw new RuntimeException(e);
+            if (_responseCodes == null || _responseCodes.contains(event.getResponse().getStatusCode())) {
+                if (_responseCodesNot == null || !_responseCodesNot.contains(event.getResponse().getStatusCode())) {
+                    if (_requestMethods == null) {
+                        try {
+                            System.out.println("**********RECV RESP*************\n" + event.getResponse().toString());
+                            Exchange exchange = new DefaultExchange(_endpoint);
+                            CamelSipMessage in = new CamelSipMessage(getCamelContext(), event);
+                            exchange.setIn(in);
+                            process(exchange);
+                        } catch (Exception e) {
+                            throw new RuntimeException(e);
+                        }
+                    }
+                }
             }
         }
     }
@@ -939,18 +1036,18 @@ public class SipComponent extends DefaultComponent {
             @Override
             public void configure() throws Exception {
 
-                from("sip:udp://0.0.0.0:5060").to("direct:dispatcher");
+                from("sip:udp://0.0.0.0:5060?requestMethod=REGISTER").to("sip:udp://" + sipServer);
+                from("sip:udp://0.0.0.0:5060?requestMethodNot=REGISTER").to("sip:proxy");
 
-                from("sip:ws://0.0.0.0:6060").to("direct:dispatcher");
-
-                from("direct:dispatcher").choice()
-                        .when().mvel("exchange.in.isRequest() && exchange.in.body.method=='REGISTER'").to("sip:udp://" + sipServer).endChoice()
-                        .when().mvel("exchange.in.isRequest() && exchange.in.body.method=='INVITE'").to("sip:respond?code=100").to("sip:udp://" + sipServer).endChoice()
-                        .when().mvel("exchange.in.isResponse() && exchange.in.body.statusCode==100").to("stub:nowhere").endChoice()
-                        .otherwise().to("sip:proxy");
-
-//                from("direct:location").choice()
-//                        .when().mvel("")
+//                from("sip:udp://0.0.0.0:5060").to("direct:dispatcher");
+//
+//                from("sip:ws://0.0.0.0:6060").to("direct:dispatcher");
+//
+//                from("direct:dispatcher").choice()
+//                        .when().mvel("exchange.in.isRequest() && exchange.in.body.method=='REGISTER'").to("sip:udp://" + sipServer).endChoice()
+//                        .when().mvel("exchange.in.isRequest() && exchange.in.body.method=='INVITE'").to("sip:respond?code=100").to("sip:udp://" + sipServer).endChoice()
+//                        .when().mvel("exchange.in.isResponse() && exchange.in.body.statusCode==100").to("stub:nowhere").endChoice()
+//                        .otherwise().to("sip:proxy");
             }
         });
         camelContext.start();
