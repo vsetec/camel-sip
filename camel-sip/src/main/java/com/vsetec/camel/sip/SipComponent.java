@@ -510,7 +510,8 @@ public class SipComponent extends DefaultComponent {
                 // no such phone registered. redirect to registrar IF it is a known phone calling
                 // redirecting to it's own registrar
                 ContactHeader contact = (ContactHeader) request.getHeader(ContactHeader.NAME);
-                SipURI fromWhom = (SipURI) contact.getAddress().getURI();
+                SipURI fromWhom = (SipURI) contact.getAddress().getURI().clone();
+                fromWhom.removeParameter("ob"); //TODO: provide more sophisticated "ob" handling
                 CamelSipRegistryItem myReg = _selfNameRegistry.get(fromWhom.toString());
                 if (myReg != null) {
 

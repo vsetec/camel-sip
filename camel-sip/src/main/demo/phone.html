@@ -27,15 +27,40 @@ limitations under the License.
         My phone number: <input id="myPhoneField" type="text"/><br/>
         My phone password: <input id="myPasswordField" type="text"/><br/>
         Number to call: <input id="otherPhoneField" type="text"/><br/>
-        <button onclick="call()">Call</button><br/>
+        <button onclick="callSipJs()">Call with Sip.Js</button><br/>
+        <button onclick="callJsSip()">Call with JsSip</button><br/>
         <button id="endCall">End Call</button><br/>
         <video id="remoteVideo"></video>
         <video id="localVideo" muted="muted"></video>
 
         <script src="sip-0.15.1.min.js"></script>
+        <script src="jssip-3.3.6.min.js"></script>
         <script type="text/javascript">
 
-            function call() {
+            function callJsSip() {
+
+                var socket = new JsSIP.WebSocketInterface('ws://' + document.getElementById('proxyIpField').value + ':' + document.getElementById('proxyPortField').value);
+                var configuration = {
+                    sockets: [socket],
+                    uri: 'sip:' + document.getElementById('myPhoneField').value + '@' + document.getElementById('proxyIpField').value,
+                    password: document.getElementById('myPasswordField').value
+                };
+
+                var coolPhone = new JsSIP.UA(configuration);
+
+                coolPhone.start();
+
+                var options = {
+                    //'eventHandlers': eventHandlers,
+                    'mediaConstraints': {'audio': true, 'video': true}
+                };
+
+                var session = coolPhone.call('sip:' + document.getElementById('otherPhoneField').value + '@' + document.getElementById('proxyIpField').value, options);
+
+            }
+            
+
+            function callSipJs() {
                 var options = {
                     media: {
                         local: {
@@ -48,7 +73,7 @@ limitations under the License.
                         }
                     },
                     ua: {
-                        uri: document.getElementById('localVideo').value + '@' + document.getElementById('proxyIpField').value,
+                        uri: document.getElementById('myPhoneField').value + '@' + document.getElementById('proxyIpField').value,
                         wsServers: ['ws://' + document.getElementById('proxyIpField').value + ':' + document.getElementById('proxyPortField').value],
                         authorizationUser: document.getElementById('myPhoneField').value,
                         password: document.getElementById('myPasswordField').value
@@ -68,7 +93,7 @@ limitations under the License.
 
                 endButton.addEventListener("click", hangup, false);
 
-                simple.call('401');
+                simple.call(document.getElementById('otherPhoneField').value);
             }
 
 
