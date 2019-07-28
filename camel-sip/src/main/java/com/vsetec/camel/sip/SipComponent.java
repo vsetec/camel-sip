@@ -15,7 +15,6 @@
  */
 package com.vsetec.camel.sip;
 
-import gov.nist.javax.sip.stack.NioMessageProcessorFactory;
 import java.net.URISyntaxException;
 import java.text.ParseException;
 import java.time.Instant;
@@ -86,27 +85,27 @@ import org.apache.camel.impl.DefaultProducer;
  *
  * @author fedd
  */
-public class SipComponentForHost extends DefaultComponent {
+public class SipComponent extends DefaultComponent {
 
     private final SipFactory _sipFactory = SipFactory.getInstance();
     private final SipStack _sipStack;
-    private final Map<String, SipProvider> _sipProvidersByPortAndTransport = new HashMap<>(3);
+    private final Map<String, SipProvider> _sipProvidersByHostPortAndTransport = new HashMap<>(3);
     private final Map<ServerTransaction, Set<ClientTransaction>> _serverClients = new HashMap<>();
     private final Map<ClientTransaction, ServerTransaction> _clientServer = new HashMap<>();
     private final Map<Dialog, Dialog> _clientServerDialog = new HashMap<>();
     private final Map<Dialog, List<Dialog>> _serverClientDialogs = new HashMap<>();
     private final CamelSipListener _listener = new CamelSipListener();
-    private final String _ourHost;
+    //private final String _ourHost;
     private final HeaderFactory _headerFactory;
     private final AddressFactory _addressFactory;
     private final MessageFactory _messageFactory;
     private final Object _security;
 
-    public SipComponentForHost(CamelContext camelContext, String hostIp, String implementationPackage, Map<String, Object> stackParameters, Object security) { // TODO: implement sips - change "security to the appropriate type
+    public SipComponent(CamelContext camelContext, String implementationPackage, Map<String, Object> stackParameters, Object security) { // TODO: implement sips - change "security to the appropriate type
 
         super(camelContext);
 
-        _ourHost = hostIp;
+        //_ourHost = hostIp;
         _security = security;
         _sipFactory.setPathName(implementationPackage);
 
@@ -120,7 +119,7 @@ public class SipComponentForHost extends DefaultComponent {
         }
 
         Properties properties = new Properties();
-        properties.setProperty("javax.sip.STACK_NAME", "delaSipStack" + _ourHost);
+        properties.setProperty("javax.sip.STACK_NAME", "delaSipStack");// + _ourHost);
         //properties.setProperty("gov.nist.javax.sip.MESSAGE_PROCESSOR_FACTORY", NioMessageProcessorFactory.class.getName());
         if (stackParameters != null) {
             properties.putAll(stackParameters);
@@ -159,11 +158,12 @@ public class SipComponentForHost extends DefaultComponent {
         // where from? add a via and a record-route
         ListeningPoint listeningPoint = receivingProvider.getListeningPoint(destinationSipUri.getTransportParam());
         int responseListeningPort = listeningPoint.getPort();
+        String listenedIp = listeningPoint.getIPAddress();
 
-        ViaHeader viaHeader = _headerFactory.createViaHeader(_ourHost, responseListeningPort, destinationSipUri.getTransportParam(), null);
+        ViaHeader viaHeader = _headerFactory.createViaHeader(listenedIp, responseListeningPort, destinationSipUri.getTransportParam(), null);
         newRequest.addFirst(viaHeader);
 
-        SipURI recordRouteUri = _addressFactory.createSipURI(null, _ourHost);
+        SipURI recordRouteUri = _addressFactory.createSipURI(null, listenedIp);
         Address recordRouteAddress = _addressFactory.createAddress(null, recordRouteUri);
         recordRouteUri.setPort(responseListeningPort);
         recordRouteUri.setLrParam();
@@ -693,9 +693,12 @@ public class SipComponentForHost extends DefaultComponent {
                         } else {
                             Address destinationAddress = routeHeader.getAddress();
                             SipURI routeUri = (SipURI) destinationAddress.getURI();
-                            ViaHeader viaHeader = _headerFactory.createViaHeader(_ourHost, routeUri.getPort(), routeUri.getTransportParam(), null);
 
-                            SipURI recordRouteUri = _addressFactory.createSipURI(null, _ourHost);
+                            String listenedIp = receivingProvider.getListeningPoint(routeUri.getTransportParam()).getIPAddress();
+
+                            ViaHeader viaHeader = _headerFactory.createViaHeader(listenedIp, routeUri.getPort(), routeUri.getTransportParam(), null);
+
+                            SipURI recordRouteUri = _addressFactory.createSipURI(null, listenedIp);
                             Address recordRouteAddress = _addressFactory.createAddress(null, recordRouteUri);
                             recordRouteUri.setPort(routeUri.getPort());
                             recordRouteUri.setLrParam();
@@ -793,12 +796,12 @@ public class SipComponentForHost extends DefaultComponent {
                 Set<Integer> responseCodesNot) {
             _endpoint = endpoint;
 
-            String key = transport + ":" + listeningPort;
+            String key = transport + ":" + listeningHost + ":" + listeningPort;
 
-            SipProvider ret = _sipProvidersByPortAndTransport.get(key);
+            SipProvider ret = _sipProvidersByHostPortAndTransport.get(key);
             if (ret == null) {
                 try {
-                    ListeningPoint lp = _sipStack.createListeningPoint(_ourHost, listeningPort, transport);
+                    ListeningPoint lp = _sipStack.createListeningPoint(listeningHost, listeningPort, transport);
 
                     Iterator sps = _sipStack.getSipProviders();
                     while (sps.hasNext()) {
@@ -814,7 +817,7 @@ public class SipComponentForHost extends DefaultComponent {
                     if (ret == null) {
                         ret = _sipStack.createSipProvider(lp);
                     }
-                    _sipProvidersByPortAndTransport.put(key, ret);
+                    _sipProvidersByHostPortAndTransport.put(key, ret);
                     ret.addSipListener(_listener);
                     _listener._providerProcessors.put(ret, new HashSet(4));
                 } catch (InvalidArgumentException | ObjectInUseException | TransportNotSupportedException | TooManyListenersException e) {
@@ -1017,7 +1020,7 @@ public class SipComponentForHost extends DefaultComponent {
 
     /**
      *
-     * @param args host server:port
+     * @param args host sipserver:port
      * @throws Exception
      */
     public static void main(String[] args) throws Exception {
@@ -1027,20 +1030,18 @@ public class SipComponentForHost extends DefaultComponent {
 
         CamelContext camelContext = new DefaultCamelContext();
         Map<String, Object> props = Collections.singletonMap("gov.nist.javax.sip.MESSAGE_PROCESSOR_FACTORY", "gov.nist.javax.sip.stack.NioMessageProcessorFactory");
-        camelContext.addComponent("sip", new SipComponentForHost(camelContext, ourHostIp, "gov.nist", props, null));
+        camelContext.addComponent("sip", new SipComponent(camelContext, "gov.nist", props, null));
 
         camelContext.addRoutes(new RouteBuilder(camelContext) {
             @Override
             public void configure() throws Exception {
 
-                from("sip:udp://0.0.0.0:5060?requestMethod=REGISTER").to("sip:udp://" + sipServer);
-                from("sip:udp://0.0.0.0:5060?requestMethodNot=REGISTER").to("sip:proxy");
+                from("sip:udp://" + ourHostIp + ":5060?requestMethod=REGISTER").to("sip:udp://" + sipServer);
+                from("sip:udp://" + ourHostIp + ":5060?requestMethodNot=REGISTER").to("sip:proxy");
 
-                from("sip:ws://0.0.0.0:6060?requestMethod=REGISTER").to("sip:udp://" + sipServer);
-                from("sip:ws://0.0.0.0:6060?requestMethodNot=REGISTER").to("sip:proxy");
-                
-                
-                
+                from("sip:ws://" + ourHostIp + ":6060?requestMethod=REGISTER").to("sip:udp://" + sipServer);
+                from("sip:ws://" + ourHostIp + ":6060?requestMethodNot=REGISTER").to("sip:proxy");
+
 //                from("sip:udp://0.0.0.0:5060").to("direct:dispatcher");
 //
 //                from("sip:ws://0.0.0.0:6060").to("direct:dispatcher");
