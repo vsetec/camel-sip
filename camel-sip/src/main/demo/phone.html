@@ -1,0 +1,77 @@
+<!DOCTYPE html>
+<!--
+Copyright 2019 fedd.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+     http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+-->
+<html>
+    <head>
+        <title>Phone Demo</title>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    </head>
+    <body>
+        <h1>Phone Demo</h1>
+        Server IP Address: <input id="proxyIpField" type="text"/><br/>
+        Server IP Port: <input id="proxyPortField" type="text"/><br/>
+        My phone number: <input id="myPhoneField" type="text"/><br/>
+        My phone password: <input id="myPasswordField" type="text"/><br/>
+        Number to call: <input id="otherPhoneField" type="text"/><br/>
+        <button onclick="call()">Call</button><br/>
+        <button id="endCall">End Call</button><br/>
+        <video id="remoteVideo"></video>
+        <video id="localVideo" muted="muted"></video>
+
+        <script src="sip-0.15.1.min.js"></script>
+        <script type="text/javascript">
+
+            function call() {
+                var options = {
+                    media: {
+                        local: {
+                            video: document.getElementById('localVideo')
+                        },
+                        remote: {
+                            video: document.getElementById('remoteVideo'),
+                            // This is necessary to do an audio/video call as opposed to just a video call
+                            audio: document.getElementById('remoteVideo')
+                        }
+                    },
+                    ua: {
+                        uri: document.getElementById('localVideo').value + '@' + document.getElementById('proxyIpField').value,
+                        wsServers: ['ws://' + document.getElementById('proxyIpField').value + ':' + document.getElementById('proxyPortField').value],
+                        authorizationUser: document.getElementById('myPhoneField').value,
+                        password: document.getElementById('myPasswordField').value
+                    }
+                };
+                var simple = new SIP.Web.Simple(options);
+
+                var endButton = document.getElementById('endCall');
+
+                var hangup = function () {
+                    simple.hangup();
+                    alert("Call Ended");
+                    simple.stop();
+                    delete simple;
+                    endButton.removeEventListener("click", hangup);
+                };
+
+                endButton.addEventListener("click", hangup, false);
+
+                simple.call('401');
+            }
+
+
+        </script>
+    </body>
+</html>
