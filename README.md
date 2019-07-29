@@ -33,6 +33,10 @@ There is an internal storage of client-server transactions bindings in this comp
 
 The bindings are created whenever a message is redirected to a different destination.
 
+### JAIN SIP artifacts
+
+The Camel message received by a consumer contains an object representing a Request or Response as a message body. Additionally it provides access to the `javax.sip.Transaction` and `javax.sip.SipProvider` objects so that the routes may inspect those and proceed accordingly.
+
 ## Syntax
 
 ### Explicit destination
@@ -67,7 +71,7 @@ To respond in a producer, use the `respond` keyword, providing a status code of 
 
     sip:respond?responseCode=100
 
-This should send a `TRYING` response back to the request's origin
+This should send a `TRYING` response back to the request's origin.
 
 ### Filtering by methods
 
