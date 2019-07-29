@@ -19,7 +19,7 @@ Websocket proxy server:
     from("sip:ws://1.2.3.4:6060?requestMethod=REGISTER").to("sip:udp://5.6.7.8");
     from("sip:ws://1.2.3.4:6060?requestMethodNot=REGISTER").to("sip:proxy");
 
-These example imply that there is a normal SIP server present in the network.
+These examples imply that there is a normal SIP server present in the network.
 
 ## Features
 
@@ -90,6 +90,12 @@ When receiving responses, you may choose to process only responses with the cert
 # Happy testing!
 
 Please note that this library is not ready yet.
+
+The library's main class has the `main` method that implements a SIP Proxy as described in the example above. It takes two arguments: 
+
+* the host IP address - it is used to listen for incoming messages on UDP port 5060 and websocket via port 6060;
+
+* the external SIP server host and port to redirect messages to.
 
 
 
