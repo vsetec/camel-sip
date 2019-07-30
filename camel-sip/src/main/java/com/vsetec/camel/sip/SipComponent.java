@@ -90,6 +90,8 @@ public class SipComponent extends DefaultComponent {
     private final SipFactory _sipFactory = SipFactory.getInstance();
     private final SipStack _sipStack;
     private final Map<String, SipProvider> _sipProvidersByHostPortAndTransport = new HashMap<>(3);
+    private final Map<String, Set<CamelSipRegistryItem>> _registeredNameRegistry = new HashMap<>(); // registered name - regitem
+    private final Map<String, CamelSipRegistryItem> _selfNameRegistry = new HashMap<>(); // self proclaimed name - regitems
     private final Map<ServerTransaction, Set<ClientTransaction>> _serverClients = new HashMap<>();
     private final Map<ClientTransaction, ServerTransaction> _clientServer = new HashMap<>();
     private final Map<Dialog, Dialog> _clientServerDialog = new HashMap<>();
@@ -452,9 +454,6 @@ public class SipComponent extends DefaultComponent {
     }
 
     private class CamelSipProxyProducer extends DefaultProducer {
-
-        private final Map<String, Set<CamelSipRegistryItem>> _registeredNameRegistry = new HashMap<>(); // registered name - regitem
-        private final Map<String, CamelSipRegistryItem> _selfNameRegistry = new HashMap<>(); // self proclaimed name - regitems
 
         public CamelSipProxyProducer(Endpoint endpoint) {
             super(endpoint);
