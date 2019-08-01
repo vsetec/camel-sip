@@ -271,7 +271,7 @@ public class SipComponent extends DefaultComponent {
                 return new DefaultEndpoint(uri, this) {
                     @Override
                     public Producer createProducer() throws Exception {
-                        return new Responder(this, responseCodes.iterator().next(), _messageFactory);
+                        return new Responder(this, responseCodes.iterator().next(), SipComponent.this);
                     }
 
                     @Override
@@ -349,6 +349,10 @@ public class SipComponent extends DefaultComponent {
 
                 from("sip:ws://" + ourHostIp + ":6060?requestMethod=REGISTER").to("sip:udp://" + sipServer);
                 from("sip:ws://" + ourHostIp + ":6060?requestMethodNot=REGISTER").to("sip:proxy");
+
+                from("sip:ws://" + ourHostIp + ":7060?requestMethod=REGISTER").to("sip:respond?responseCode=200");
+                from("sip:ws://" + ourHostIp + ":7060?requestMethod=INVITE").to("sip:respond?responseCode=100").to("sip:proxy");
+                from("sip:ws://" + ourHostIp + ":7060?requestMethodNot=REGISTER?requestMethodNot=INVITE").to("sip:proxy");
 
 //                from("sip:udp://0.0.0.0:5060").to("direct:dispatcher");
 //

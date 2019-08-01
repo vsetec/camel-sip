@@ -33,6 +33,13 @@ import javax.sip.SipProvider;
 import javax.sip.SipStack;
 import javax.sip.TransportNotSupportedException;
 import javax.sip.address.SipURI;
+import javax.sip.header.ContactHeader;
+import javax.sip.header.ExpiresHeader;
+import javax.sip.header.FromHeader;
+import javax.sip.header.RouteHeader;
+import javax.sip.header.ViaHeader;
+import javax.sip.message.Request;
+import javax.sip.message.Response;
 
 /**
  *
@@ -207,24 +214,73 @@ public class Registrar {
         return _serverClients.get(serverTransaction);
     }
 
-    public void register(String registeredAddress, SipURI contactAddress, String transport, SipURI registrarAddress, int expires) {
+    protected boolean tryRegister(ServerTransaction serverTransaction, Response response) {
+        return tryRegister(serverTransaction, response, null);
+    }
+
+    protected boolean tryRegister(ServerTransaction serverTransaction, Response response, ClientTransaction clientTransaction) {
+        // I am a server. I received a request and have to send a response
+        Request requestWeveReceived = serverTransaction.getRequest();
+        if (response.getStatusCode() == 200) {
+            //we are okaying some request
+            if (requestWeveReceived.getMethod().equals(Request.REGISTER)) {
+                // and it is a register request!
+                // remember this phone for future proxying
+                String registeredName = ((FromHeader) requestWeveReceived.getHeader(FromHeader.NAME)).getAddress().getURI().toString();
+                SipURI selfProclaimedName = (SipURI) ((ContactHeader) requestWeveReceived.getHeader(ContactHeader.NAME)).getAddress().getURI();
+
+                // expires magic
+                int expires;
+                {
+                    ExpiresHeader expiresHeader = ((ExpiresHeader) requestWeveReceived.getHeader(ExpiresHeader.NAME));
+                    if (expiresHeader != null) {
+                        expires = expiresHeader.getExpires();
+                    } else {
+                        expires = ((ContactHeader) requestWeveReceived.getHeader(ContactHeader.NAME)).getExpires();
+                    }
+
+                }
+                SipURI registrarAddress;
+                // was it a proxified register request? or we processed it ourselves
+                // in other words, is it a response we have created, or the one we're proxying
+                if (clientTransaction != null) {
+                    // we are proxying. there is an actual registrar out there
+                    Request registerRequestWeveSent = clientTransaction.getRequest();
+                    // get the registrar address from the topmost Route header that we created
+                    RouteHeader route = (RouteHeader) registerRequestWeveSent.getHeader(RouteHeader.NAME);
+                    registrarAddress = (SipURI) route.getAddress().getURI();
+                } else {
+                    // we aren't proxying. we decided to register ourselves
+                    registrarAddress = null;
+                }
+                String transport = ((ViaHeader) response.getHeader(ViaHeader.NAME)).getTransport();
+                this._register(registeredName, selfProclaimedName, transport, registrarAddress, expires);
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private void _register(String registeredAddress, SipURI contactAddress, String transport, SipURI registrarAddress, int expires) {
         Set<RegistryItem> items;
         synchronized (_registeredNameRegistry) {
             items = _registeredNameRegistry.get(registeredAddress);
             if (items == null) {
                 items = new HashSet<>(4);
+                _registeredNameRegistry.put(registeredAddress, items);
             }
         }
 
         RegistryItem item = new RegistryItem(registrarAddress, registeredAddress, contactAddress, expires, transport);
         synchronized (items) {
-            System.out.println("**********REGISTER***********\nregistrar: " + (registrarAddress == null ? "<this server>" : registrarAddress)
-                    + "\nregisteredName: " + registeredAddress
-                    + "\nunder name of: " + contactAddress.toString()
-                    + "\nexpiring in sec: " + expires + "\n\n");
             items.add(item);
         }
         _selfNameRegistry.put(contactAddress.toString(), item);
+
+        System.out.println("**********REGISTER***********\nregistrar: " + (registrarAddress == null ? "<this server>" : registrarAddress)
+                + "\nregisteredName: " + registeredAddress
+                + "\nunder name of: " + contactAddress.toString()
+                + "\nexpiring in sec: " + expires + "\n\n");
 
     }
 }

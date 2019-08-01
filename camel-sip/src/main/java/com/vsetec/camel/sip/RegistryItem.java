@@ -23,7 +23,7 @@ import javax.sip.address.SipURI;
  *
  * @author fedd
  */
-class RegistryItem {
+public class RegistryItem {
 
     final SipURI _registrarUri; // whom have we registered this with
     private final String _phoneOfficialAddress; // from from/to field
@@ -42,7 +42,9 @@ class RegistryItem {
     @Override
     public int hashCode() {
         int hash = 3;
-        hash = 37 * hash + Objects.hashCode(this._registrarUri.toString());
+        if (_registrarUri != null) {
+            hash = 37 * hash + Objects.hashCode(this._registrarUri.toString());
+        }
         hash = 37 * hash + Objects.hashCode(this._phoneOfficialAddress);
         hash = 37 * hash + Objects.hashCode(this._phoneRealAddress.toString());
         return hash;
@@ -60,7 +62,11 @@ class RegistryItem {
             return false;
         }
         final RegistryItem other = (RegistryItem) obj;
-        if (!Objects.equals(this._registrarUri.toString(), other._registrarUri.toString())) {
+        if (this._registrarUri != null && other._registrarUri != null) {
+            if (!Objects.equals(this._registrarUri.toString(), other._registrarUri.toString())) {
+                return false;
+            }
+        } else if (this._registrarUri != other._registrarUri) { // one of them is null, comparison is legitimate
             return false;
         }
         if (!Objects.equals(this._phoneOfficialAddress, other._phoneOfficialAddress)) {

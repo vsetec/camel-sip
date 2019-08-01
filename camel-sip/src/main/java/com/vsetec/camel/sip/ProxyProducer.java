@@ -30,8 +30,6 @@ import javax.sip.SipProvider;
 import javax.sip.address.Address;
 import javax.sip.address.SipURI;
 import javax.sip.header.ContactHeader;
-import javax.sip.header.ExpiresHeader;
-import javax.sip.header.FromHeader;
 import javax.sip.header.RecordRouteHeader;
 import javax.sip.header.RouteHeader;
 import javax.sip.header.ViaHeader;
@@ -142,43 +140,11 @@ class ProxyProducer extends DefaultProducer {
         newResponse.removeFirst(ViaHeader.NAME);
         // actual forwarding
         // what if it is a register?
-        _register(serverTransaction, newResponse, clientTransaction);
+        //_register(serverTransaction, newResponse, clientTransaction);
+        _registrar.tryRegister(serverTransaction, response, clientTransaction);
         System.out.println("**********PROXY SEND RESP***********\n" + newResponse.toString());
         serverTransaction.sendResponse(newResponse);
         return true;
-    }
-
-    private boolean _register(ServerTransaction serverTransaction, Response response, ClientTransaction clientTransaction) {
-        // I am a server. I received a request and have to send a response
-        Request requestWeveReceived = serverTransaction.getRequest();
-        if (response.getStatusCode() == 200) {
-            //we are okaying some request
-            if (requestWeveReceived.getMethod().equals(Request.REGISTER)) {
-                // and it is a register request!
-                // remember this phone for future proxying
-                String registeredName = ((FromHeader) requestWeveReceived.getHeader(FromHeader.NAME)).getAddress().getURI().toString();
-                SipURI selfProclaimedName = (SipURI) ((ContactHeader) requestWeveReceived.getHeader(ContactHeader.NAME)).getAddress().getURI();
-                //int expires = ((ContactHeader) requestWeveReceived.getHeader(ContactHeader.NAME)).getExpires();
-                int expires = ((ExpiresHeader) requestWeveReceived.getHeader(ExpiresHeader.NAME)).getExpires();
-                SipURI registrarAddress;
-                // was it a proxified register request? or we processed it ourselves
-                // in other words, is it a response we have created, or the one we're proxying
-                if (clientTransaction != null) {
-                    // we are proxying. there is an actual registrar out there
-                    Request registerRequestWeveSent = clientTransaction.getRequest();
-                    // get the registrar address from the topmost Route header that we created
-                    RouteHeader route = (RouteHeader) registerRequestWeveSent.getHeader(RouteHeader.NAME);
-                    registrarAddress = (SipURI) route.getAddress().getURI();
-                } else {
-                    // we aren't proxying. we decided to register ourselves
-                    registrarAddress = null;
-                }
-                String transport = ((ViaHeader) response.getHeader(ViaHeader.NAME)).getTransport();
-                _registrar.register(registeredName, selfProclaimedName, transport, registrarAddress, expires);
-                return true;
-            }
-        }
-        return false;
     }
 
     @Override
@@ -219,6 +185,8 @@ class ProxyProducer extends DefaultProducer {
                     // try to send along the route specified in request
                     RouteHeader routeHeader = (RouteHeader) request.getHeader(RouteHeader.NAME);
                     if (routeHeader == null) {
+                        // TODO: place some header somewhere so that a camel route may decide to respond accordingly
+                        // TODO: or consider responding right here with an appropriate status like "service unavailable". Check all possible causes
                         System.out.println("**********NO PROXYSEND REQ NO ROUTE*************\n\n\n");
                     } else {
                         Address destinationAddress = routeHeader.getAddress();

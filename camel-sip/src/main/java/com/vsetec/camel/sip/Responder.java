@@ -16,7 +16,6 @@
 package com.vsetec.camel.sip;
 
 import javax.sip.ServerTransaction;
-import javax.sip.message.MessageFactory;
 import javax.sip.message.Request;
 import javax.sip.message.Response;
 import org.apache.camel.Endpoint;
@@ -30,12 +29,12 @@ import org.apache.camel.impl.DefaultProducer;
 class Responder extends DefaultProducer {
 
     private final Integer _responseCode;
-    private final MessageFactory _messageFactory;
+    private final SipComponent _component;
 
-    public Responder(Endpoint endpoint, Integer responseCode, MessageFactory messageFactory) {
+    public Responder(Endpoint endpoint, Integer responseCode, SipComponent component) {
         super(endpoint);
         _responseCode = responseCode;
-        _messageFactory = messageFactory;
+        _component = component;
     }
 
     @Override
@@ -52,9 +51,10 @@ class Responder extends DefaultProducer {
             // we may respond right here
             if (_responseCode != null) {
                 // let's respond
-                Response response = _messageFactory.createResponse(_responseCode, request);
+                Response response = _component.getMessageFactory().createResponse(_responseCode, request);
                 System.out.println("**********SEND RESP BY CODE*************\n" + response.toString());
                 serverTransaction.sendResponse(response);
+                _component.getRegistrar().tryRegister(serverTransaction, response);
             }
         }
     }

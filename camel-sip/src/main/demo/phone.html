@@ -27,17 +27,20 @@ limitations under the License.
         My phone number: <input id="myPhoneField" type="text"/><br/>
         My phone password: <input id="myPasswordField" type="text"/><br/>
         Number to call: <input id="otherPhoneField" type="text"/><br/>
-        <button onclick="callSipJs()">Call with Sip.Js</button><br/>
-        <button onclick="callJsSip()">Call with JsSip</button><br/>
-        <button id="endCall">End Call</button><br/>
-        <video id="remoteVideo"></video>
-        <video id="localVideo" muted="muted"></video>
+        <button onclick="registerSipJs()">Register with Sip.Js</button><button onclick="callSipJs()">Call with Sip.Js</button><br/>
+        <button onclick="registerJsSip()">Register with JsSip</button><button onclick="callJsSip()">Call with JsSip</button><br/>
+<!--        <button id="endCall">End Call</button><br/>-->
+<video id="remoteVideo" autoplay="autoplay"></video>
+<video id="localVideo" autoplay="autoplay" muted="muted"></video>
 
         <script src="sip-0.15.1.min.js"></script>
         <script src="jssip-3.3.6.min.js"></script>
         <script type="text/javascript">
 
-            function callJsSip() {
+            var jssip;
+            var sipjs;
+            
+            function registerJsSip() {
 
                 var socket = new JsSIP.WebSocketInterface('ws://' + document.getElementById('proxyIpField').value + ':' + document.getElementById('proxyPortField').value);
                 var configuration = {
@@ -50,17 +53,21 @@ limitations under the License.
 
                 coolPhone.start();
 
+                jssip = coolPhone;
+                
+            }
+            
+            function callJsSip(){
                 var options = {
                     //'eventHandlers': eventHandlers,
                     'mediaConstraints': {'audio': true, 'video': true}
                 };
 
-                var session = coolPhone.call('sip:' + document.getElementById('otherPhoneField').value + '@' + document.getElementById('proxyIpField').value, options);
-
+                var session = jssip.call('sip:' + document.getElementById('otherPhoneField').value + '@' + document.getElementById('proxyIpField').value, options);
             }
             
 
-            function callSipJs() {
+            function registerSipJs() {
                 var options = {
                     media: {
                         local: {
@@ -80,8 +87,9 @@ limitations under the License.
                     }
                 };
                 var simple = new SIP.Web.Simple(options);
+                sipjs = simple;
 
-                var endButton = document.getElementById('endCall');
+                /*var endButton = document.getElementById('endCall');
 
                 var hangup = function () {
                     simple.hangup();
@@ -91,11 +99,16 @@ limitations under the License.
                     endButton.removeEventListener("click", hangup);
                 };
 
-                endButton.addEventListener("click", hangup, false);
+                endButton.addEventListener("click", hangup, false);*/
 
-                simple.call(document.getElementById('otherPhoneField').value);
+                
             }
 
+            function callSipJs() {
+                sipjs.call(document.getElementById('otherPhoneField').value);
+            }
+            
+            
 
         </script>
     </body>
