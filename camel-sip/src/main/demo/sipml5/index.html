@@ -1,0 +1,379 @@
+<html>
+    <head>
+        <title>SIPML5 Softphone</title>
+    </head>
+    <body> 
+
+
+        <script src="SIPml-api.js"></script>
+        <div id="conn-status">
+            <span class="field">status: </span>
+            <span id="txtRegStatus"></span> <span class="field"> Call Status: </span><label style="width: 100%;" align="center" id="txtCallStatus">
+                </label> 
+            <h1>SIPML5 Phone Demo</h1>
+            Server IP Address: <input id="proxyIpField" type="text"/><br/>
+            Server IP Port: <input id="proxyPortField" type="text"/><br/>
+            WebSocket Type: <input id="proxyTypeField" type="text"/><br/>
+
+            My phone number: <input id="myPhoneField" type="text"/><br/>
+            My phone password: <input id="myPasswordField" type="text"/><br/>
+            Number to call: <input id="txtPhoneNumber"  type="text"/><br/>
+            <button id="btnRegister" onclick="sipRegister()" >Register</button><button id="ua-unregister" onclick="sipUnRegister()" >UnRegister</button>
+
+                <table style='width: 100%;'>
+
+                    <tr>
+                        <td>
+                            <span id="divBtnCallGroup">
+                                
+                                    <button id="btnCall" onclick='sipCall("call-audio");' disabled class="btn btn-primary" data-toggle="dropdown">Call</button>
+                                </span>&nbsp;&nbsp;
+                                 
+                                    <input type="button" id="btnHangUp"  class="btn btn-primary" value="HangUp" onclick='sipHangUp();' disabled />
+                               
+                        </td>
+                    </tr>
+
+                    <tr>
+                        <td id="tdVideo" class='tab-video'>
+                            <video class="video" width="100%" height="100%" id="video_remote" autoplay="autoplay"  ></video>
+
+
+                            <video class="video" width="100%" height="100%" id="video_local" autoplay="autoplay" muted="true" style=""></video>
+
+                        </td>
+                    </tr>
+
+                </table>
+            </div>
+        </div>
+        <div id='divGlassPanel' class='glass-panel' style='display:none'></div>
+        <!-- KeyPad Div -->
+        <!-- Call button options -->
+        <ul id="ulCallOptions" class="dropdown-menu" style="display:none">
+        </ul>
+
+    </body>
+
+    <script type="text/javascript">
+        // to avoid caching
+
+        var oSipStack, oSipSessionRegister, oSipSessionCall;
+        var videoRemote, videoLocal, audioRemote;
+        var bDisableVideo = true;
+        var oConfigCall;
+        var oReadyStateTimer;
+        var displayName = document.getElementById('myPhoneField').value ;
+    var hostname = document.getElementById('proxyIpField').value;
+    var url = "sip:"+document.getElementById('myPhoneField').value + '@' + document.getElementById('proxyIpField').value;
+    var authorizationUser = document.getElementById('myPhoneField').value ;
+    var password = document.getElementById('myPasswordField').value;
+    var wsServers = document.getElementById('proxyTypeField').value +'://' + document.getElementById('proxyIpField').value + ':' + document.getElementById('proxyPortField').value; 
+      
+  
+        window.onload = function () {
+            window.console && window.console.info && window.console.info("location=" + window.location);
+
+            videoLocal = document.getElementById("video_local");
+            videoRemote = document.getElementById("video_remote");
+            audioRemote = document.getElementById("audio_remote"); 
+
+
+
+//             displayName='1001';
+//            hostname='46.4.91.58';
+//            url='sip:1001@46.4.91.58';
+//            authorizationUser='1001';
+//            password='1234!!';
+//            wsServers='wss://46.4.91.58:7443';
+//            // Initialize call button
+            uiBtnCallSetText("Call"); 
+
+            var preInit = function () {
+                // set default webrtc type (before initialization) 
+                // initialize SIPML5
+                SIPml.init(postInit);
+
+            }
+
+            oReadyStateTimer = setInterval(function () {
+                if (document.readyState === "complete") {
+                    clearInterval(oReadyStateTimer);
+                    // initialize SIPML5
+                    preInit();
+                    var buttonClicked = sessionStorage.getItem('retry1');
+ if(buttonClicked=="0")
+ {
+        sessionStorage.setItem('retry1', "1"); 
+                    sipRegister();
+    }
+
+                }
+            },
+                    2000);
+
+        };
+
+        function postInit() {
+
+            // FIXME: displays must be per session 
+
+            btnRegister.disabled = false;
+            document.body.style.cursor = 'default';
+            oConfigCall = {
+                audio_remote: audioRemote,
+                video_local: videoLocal,
+                video_remote: videoRemote, 
+                bandwidth: {audio: undefined, video: undefined},
+                video_size: {minWidth: undefined, minHeight: undefined, maxWidth: undefined, maxHeight: undefined},
+                events_listener: {events: '*', listener: onSipEventSession},
+                sip_caps: [
+                    {name: '+g.oma.sip-im'},
+                    {name: 'language', value: '\"en,fr\"'}
+                ]
+            };
+        }
+        // sends SIP REGISTER request to login
+        function sipRegister() {
+ 
+            // catch exception for IE (DOM not ready)
+            try {
+                btnRegister.disabled = true;
+ if (!hostname || !authorizationUser || !url) {
+                    txtRegStatus.innerHTML = '<b>Disconnected</b>';
+                    btnRegister.disabled = false;
+                    
+                    var hostname1 = document.getElementById('proxyIpField').value;
+
+    var authorizationUser1 = document.getElementById('myPhoneField').value ;
+  if (hostname1 || authorizationUser1) {    
+        var buttonClicked = sessionStorage.getItem('retry1');
+        sessionStorage.setItem('retry1', "0");
+        window.location.reload(); 
+         }
+   return;
+                }
+                // create SIP stack
+                oSipStack = new SIPml.Stack({
+                    realm: hostname,
+                    impi: authorizationUser,
+                    impu: url,
+                    password: password,
+                    display_name: displayName,
+                    websocket_proxy_url:wsServers,
+                    outbound_proxy_url: ( null),
+                    ice_servers: (null),
+                    enable_rtcweb_breaker: ( false),
+                    events_listener: {events: '*', listener: onSipEventStack},
+                    enable_early_ims: ( true), // Must be true unless you're using a real IMS network
+                    enable_media_stream_cache: (false),
+                    bandwidth: ( tsk_string_to_object( null)), // could be redefined a session-level
+                    video_size: ( tsk_string_to_object( null)), // could be redefined a session-level
+                    sip_headers: [
+                        {name: 'User-Agent', value: 'IM-client/OMA1.0 sipML5-v1.2016.03.04'},
+                        {name: 'Organization', value: 'Doubango Telecom'}
+                    ]
+                }
+                );
+                if (oSipStack.start() != 0) {
+                    txtRegStatus.innerHTML = '<b>Failed to start the SIP stack</b>';
+                } else
+                    return;
+            } catch (e) {
+                txtRegStatus.innerHTML = "<b>2:" + e + "</b>";
+            }
+            btnRegister.disabled = false;
+        }
+        // sends SIP REGISTER (expires=0) to logout
+        function sipUnRegister() {
+            if (oSipStack) {
+                oSipStack.stop(); // shutdown all sessions
+            }
+        }
+        // makes a call (SIP INVITE)
+        function sipCall(s_type) {
+            if (oSipStack && !oSipSessionCall && !tsk_string_is_null_or_empty(txtPhoneNumber.value)) {
+                btnCall.disabled = true;
+                btnHangUp.disabled = false;
+                if (window.localStorage) {
+                    oConfigCall.bandwidth = tsk_string_to_object(null); // already defined at stack-level but redifined to use latest values
+                    oConfigCall.video_size = tsk_string_to_object(null); // already defined at stack-level but redifined to use latest values
+                }
+                // create call session
+                oSipSessionCall = oSipStack.newSession(s_type, oConfigCall);
+                // make call
+                if (oSipSessionCall.call(txtPhoneNumber.value) != 0) {
+                    oSipSessionCall = null;
+                    txtCallStatus.value = 'Failed to make call';
+                    btnCall.disabled = false;
+
+                    btnHangUp.disabled = true;
+                    return;
+                } 
+            } else if (oSipSessionCall) {
+                txtCallStatus.innerHTML = '<i>Connecting...</i>';
+                oSipSessionCall.accept(oConfigCall);
+            }
+        }
+        // terminates the call (SIP BYE or CANCEL)
+        function sipHangUp() {
+            if (oSipSessionCall) {
+                txtCallStatus.innerHTML = '<i>Terminating the call...</i>';
+                oSipSessionCall.hangup({events_listener: {events: '*', listener: onSipEventSession}});
+            }
+        }
+        function uiOnConnectionEvent(b_connected, b_connecting) { // should be enum: connecting, connected, terminating, terminated
+            btnRegister.disabled = b_connected || b_connecting;
+            //  btnUnRegister.disabled = !b_connected && !b_connecting;
+            btnCall.disabled = !(b_connected && tsk_utils_have_webrtc() && tsk_utils_have_stream());
+            btnHangUp.disabled = !oSipSessionCall;
+        }
+        
+        function uiBtnCallSetText(s_text) {
+            switch (s_text) {
+                case "Call":
+                {
+                    var bDisableCallBtnOptions = ("false");
+                    btnCall.value = btnCall.innerHTML = bDisableCallBtnOptions ? 'Call' : 'Call <span id="spanCaret" class="caret">';
+                    btnCall.setAttribute("class", bDisableCallBtnOptions ? "btn btn-primary" : "btn btn-primary dropdown-toggle");
+                    btnCall.onclick = bDisableCallBtnOptions ? function () {
+                        sipCall(bDisableVideo ? 'call-audio' : 'call-audiovideo');
+                    } : null;
+                    ulCallOptions.style.visibility = bDisableCallBtnOptions ? "hidden" : "visible";
+                    if (!bDisableCallBtnOptions && ulCallOptions.parentNode != divBtnCallGroup) {
+                        divBtnCallGroup.appendChild(ulCallOptions);
+                    } else if (bDisableCallBtnOptions && ulCallOptions.parentNode == divBtnCallGroup) {
+                        document.body.appendChild(ulCallOptions);
+                    }
+
+                    break;
+                }
+                default:
+                {
+                    btnCall.value = btnCall.innerHTML = s_text;
+                    btnCall.setAttribute("class", "btn btn-primary");
+                    btnCall.onclick = function () {
+                        sipCall(bDisableVideo ? 'call-audio' : 'call-audiovideo');
+                    };
+                    ulCallOptions.style.visibility = "hidden";
+                    if (ulCallOptions.parentNode == divBtnCallGroup) {
+                        document.body.appendChild(ulCallOptions);
+                    }
+                    break;
+                }
+            }
+        }
+        function uiCallTerminated(s_description) {
+            uiBtnCallSetText("Call");
+            btnHangUp.value = 'HangUp';
+            btnCall.disabled = false;
+            btnHangUp.disabled = true;
+            oSipSessionCall = null;
+            txtCallStatus.innerHTML = "<i>" + s_description + "</i>";
+            setTimeout(function () {
+                if (!oSipSessionCall)
+                    txtCallStatus.innerHTML = '';
+            }, 2500);
+        }
+        // Callback function for SIP Stacks
+        function onSipEventStack(e /*SIPml.Stack.Event*/) {
+            tsk_utils_log_info('==stack event = ' + e.type);
+            switch (e.type) {
+                case 'started':
+                {
+                    // catch exception for IE (DOM not ready)
+                    try {
+                        // LogIn (REGISTER) as soon as the stack finish starting
+                        oSipSessionRegister = this.newSession('register', {
+                            expires: 200,
+                            events_listener: {events: '*', listener: onSipEventSession},
+                            sip_caps: [
+                                {name: '+g.oma.sip-im', value: null},
+                                //{ name: '+sip.ice' }, // rfc5768: FIXME doesn't work with Polycom TelePresence
+                                {name: '+audio', value: null},
+                                {name: 'language', value: '\"en,fr\"'}
+                            ]
+                        });
+                        oSipSessionRegister.register();
+                    } catch (e) {
+                        txtRegStatus.value = txtRegStatus.innerHTML = "<b>1:" + e + "</b>";
+                        btnRegister.disabled = false;
+                    }
+                    break;
+                }
+                case 'failed_to_stop':
+                {
+                    var bFailure = (e.type == 'failed_to_start') || (e.type == 'failed_to_stop');
+                    oSipStack = null;
+                    oSipSessionRegister = null;
+                    oSipSessionCall = null;
+                    uiOnConnectionEvent(false, false);
+                    txtCallStatus.innerHTML = '';
+                    txtRegStatus.innerHTML = bFailure ? "<i>Disconnected: <b>" + e.description + "</b></i>" : "<i>Disconnected</i>";
+                    break;
+                }
+                case 'i_new_call':
+                {
+                    if (oSipSessionCall) {
+                        // do not accept the incoming call if we're already 'in call'
+                        e.newSession.hangup(); // comment this line for multi-line support
+                    } else {
+                        oSipSessionCall = e.newSession;
+                        // start listening for events
+                        oSipSessionCall.setConfiguration(oConfigCall);
+                        uiBtnCallSetText('Answer');
+                        btnHangUp.value = 'Reject';
+                        btnCall.disabled = false;
+                        btnHangUp.disabled = false;
+                        var sRemoteNumber = (oSipSessionCall.getRemoteFriendlyName() || 'unknown');
+                        txtCallStatus.innerHTML = "<i>Incoming call from [<b>" + sRemoteNumber + "</b>]</i>";
+                    }
+                    break;
+                }
+                case 'starting':
+                default:
+                    break;
+            }
+        }
+        ;
+        // Callback function for SIP sessions (INVITE, REGISTER, MESSAGE...)
+        function onSipEventSession(e /* SIPml.Session.Event */) {
+            tsk_utils_log_info('==session event = ' + e.type);
+
+            switch (e.type) {
+                case 'connecting':
+                case 'connected':
+                {
+                    var bConnected = (e.type == 'connected');
+                    if (e.session == oSipSessionRegister) {
+                        uiOnConnectionEvent(bConnected, !bConnected);
+                        txtRegStatus.innerHTML = "<i>" + e.description + "</i>";
+                    } else if (e.session == oSipSessionCall) {
+                        btnHangUp.value = 'HangUp';
+                        btnCall.disabled = true;
+                        btnHangUp.disabled = false;
+                        txtCallStatus.innerHTML = "<i>" + e.description + "</i>";
+                    }
+                    break;
+                } // 'connecting' | 'connected'
+                case 'terminating':
+                case 'terminated':
+                {
+                
+                    if (e.session == oSipSessionRegister) {
+                        uiOnConnectionEvent(false, false);
+                        oSipSessionCall = null;
+                        oSipSessionRegister = null;
+                        txtRegStatus.innerHTML = "<i>" + e.description + "</i>";
+                    } else if (e.session == oSipSessionCall) {
+
+                        uiCallTerminated(e.description);
+                    }
+                    break;
+                } // 'terminating' | 'terminated'
+
+
+            }
+        }
+    </script>
+</html>

@@ -1,0 +1,356 @@
+<html>
+  <head>
+    <title>SIP.JS  Softphone Phone</title>
+  </head>
+  <body> 
+
+
+    <script src="sip-0.7.3.js"></script>
+
+
+<div id="conn-status">
+                            <span class="field">status: </span>
+                            <span id="ua-status"></span>
+
+
+<h1>SIP.JS Phone Demo</h1>
+        Server IP Address: <input id="proxyIpField" type="text"/><br/>
+        Server IP Port: <input id="proxyPortField" type="text"/><br/>
+       WebSocket Type: <input id="proxyTypeField" type="text"/><br/>
+        My phone number: <input id="myPhoneField" type="text"/><br/>
+        My phone password: <input id="myPasswordField" type="text"/><br/>
+        Number to call: <input id="ua-uri"  type="text"/><br/>
+        <button id="ua-register"  >Register</button><button onclick="inviteSubmit()">Call</button><br/> 
+
+
+                        </div>
+                    </div>
+
+
+    <ul id="session-list"></ul>
+<ul style="display:none" id="templates">
+
+ <div id="session-template" class="template session">
+<div>
+        <button class="green">Green</button>
+        <button  class="red">Red</button>
+</div>
+   <video autoplay>Video Disabled or Unavailable</video>
+ 
+      </div>
+</ul>
+
+
+
+  </body>
+
+<script>
+
+var elements = {
+  uaStatus:        document.getElementById('ua-status'),
+  registerButton:  document.getElementById('ua-register'),
+  newSessionForm:  document.getElementById('new-session-form'),
+  inviteButton:    document.getElementById('ua-invite-submit'), 
+  uaVideo:         document.getElementById('ua-video'),
+   uaURI:           document.getElementById('ua-uri'),
+  sessionList:     document.getElementById('session-list'),
+  sessionTemplate: document.getElementById('session-template')
+};
+
+var config = {
+  userAgentString: 'SIP.js/0.7.0 BB',
+  traceSip: true,
+  register: false
+};
+
+var ua;
+var sessionUIs = {};
+
+
+     
+     // display_name ="1001";
+     // sip_uri = "1001@46.4.91.58";
+     // sip_password = "1234!!";
+     // ws_servers = "wss://46.4.91.58:7443";
+     // authuname ="1001";     
+     
+    if(document.getElementById('myPhoneField').value!="")
+    {
+config['displayName'] = document.getElementById('myPhoneField').value ;
+    config['uri'] = document.getElementById('myPhoneField').value + '@' + document.getElementById('proxyIpField').value;
+    config['authorizationUser'] = document.getElementById('myPhoneField').value ;
+    config['password'] = document.getElementById('myPasswordField').value;
+    config['wsServers'] = document.getElementById('proxyTypeField').value +'://' + document.getElementById('proxyIpField').value + ':' + document.getElementById('proxyPortField').value; 
+
+
+
+
+ document.getElementById('ua-status').innerHTML = 'Connecting...';
+ua = new SIP.UA(config);
+
+
+
+
+
+  ua.on('invite', function (session) {
+       
+var ele = document.getElementsByClassName("session");
+    while(ele.length > 0){
+        ele[0].parentNode.removeChild(ele[0]);
+    }
+    createNewSessionUI(session.remoteIdentity.uri, session);
+  });
+
+ 
+
+  document.body.className = 'started';
+//}, false);
+
+
+function inviteSubmit() {
+//  e.preventDefault();
+ // e.stopPropagation();
+
+  // Parse config options
+ // var video = elements.uaVideo.checked;
+  var uri = elements.uaURI.value;
+  elements.uaURI.value = '';
+  var ele = document.getElementsByClassName("session");
+    while(ele.length > 0){
+        ele[0].parentNode.removeChild(ele[0]);
+    }
+  if (!uri) return;
+  // Send invite
+  var session = ua.invite(uri, {
+    media: {
+      constraints: {
+        audio: true,
+        video: false
+      }
+    }
+  });
+
+  // Create new Session and append it to list
+  var ui = createNewSessionUI(uri, session);
+}
+
+//elements.newSessionForm.addEventListener('submit', inviteSubmit, false);
+
+
+function createNewSessionUI(uri, session, message) {
+  var tpl = elements.sessionTemplate;
+  var node = tpl.cloneNode(true);
+  var sessionUI = {};
+  var messageNode;
+
+  uri = session ?
+    session.remoteIdentity.uri :
+    SIP.Utils.normalizeTarget(uri, ua.configuration.hostport_params);
+
+  if (!uri) { return; }
+
+  // Save a bunch of data on the sessionUI for later access
+  sessionUI.session        = session;
+  sessionUI.node           = node;
+  sessionUI.green          = node.querySelector('.green');
+  sessionUI.red            = node.querySelector('.red');
+  sessionUI.video          = node.querySelector('video');
+
+  sessionUI.renderHint     = {
+    remote: sessionUI.video
+  };
+
+  sessionUIs[uri] = sessionUI;
+
+  // Update template
+  node.classList.remove('template');
+
+  // DOM event listeners
+  sessionUI.green.addEventListener('click', function () {
+   // var video = elements.uaVideo.checked;
+    var options = {
+      media: {
+        constraints: {
+          audio: true,
+          video: false
+        }
+      }
+    };
+
+    var session = sessionUI.session;
+    if (!session) {
+      /* TODO - Invite new session */
+      /* Don't forget to enable buttons */
+      session = sessionUI.session = ua.invite(uri, options);
+
+      setUpListeners(session);
+    } else if (session.accept && !session.startTime) { // Incoming, not connected
+      session.accept(options);
+    }
+
+  }, false);
+
+  sessionUI.red.addEventListener('click', function () {
+    var session = sessionUI.session;
+    if (!session) {
+      return;
+    } else if (session.startTime) { // Connected
+      session.bye();
+    } else if (session.reject) { // Incoming
+      session.reject();
+    } else if (session.cancel) { // Outbound
+      session.cancel();
+    }
+  }, false);
+
+
+  // Initial DOM state
+  if (session && !session.accept) {
+    sessionUI.green.disabled = true;
+    sessionUI.green.innerHTML = '...';
+    sessionUI.red.innerHTML = 'Cancel';
+  } else if (!session) {
+    sessionUI.red.disabled = true;
+    sessionUI.green.innerHTML = 'Invite';
+    sessionUI.red.innerHTML = '...';
+  } else {
+    sessionUI.green.innerHTML = 'Accept';
+    sessionUI.red.innerHTML = 'Reject';
+  }
+  
+
+  // SIP.js event listeners
+  function setUpListeners(session) {
+    sessionUI.red.disabled = false;
+
+    if (session.accept) {
+      sessionUI.green.disabled = false;
+      sessionUI.green.innerHTML = 'Accept';
+      sessionUI.red.innerHTML = 'Reject';
+    } else {
+      sessionUI.green.innerHMTL = '...';
+      sessionUI.red.innerHTML = 'Cancel';
+    }
+
+    session.on('accepted', function () {
+      sessionUI.green.disabled = true;
+      sessionUI.green.innerHTML = '...';
+      sessionUI.red.innerHTML = 'Bye';
+      sessionUI.video.className = 'on';
+
+      session.mediaHandler.render(sessionUI.renderHint);
+    });
+
+    session.mediaHandler.on('addStream', function () {
+      session.mediaHandler.render(sessionUI.renderHint);
+    });
+
+    session.on('bye', function () {
+      sessionUI.green.disabled = false;
+      sessionUI.red.disabled = true;
+      sessionUI.green.innerHTML = 'Invite';
+      sessionUI.red.innerHTML = '...';
+      sessionUI.video.className = '';
+      delete sessionUI.session;
+    });
+
+    session.on('failed', function () {
+      sessionUI.green.disabled = false;
+      sessionUI.red.disabled = true;
+      sessionUI.green.innerHTML = 'Invite';
+      sessionUI.red.innerHTML = '...';
+      sessionUI.video.className = '';
+      delete sessionUI.session;
+    });
+
+    session.on('refer', function handleRefer (request) {
+      var target = request.parseHeader('refer-to').uri;
+      session.bye();
+
+      createNewSessionUI(target, ua.invite(target, {
+        media: {
+          constraints: {
+            audio: true,
+            video: false
+          }
+        }
+      }));
+    });
+  }
+
+  if (session) {
+    setUpListeners(session);
+
+  }
+  elements.sessionList.appendChild(node);
+}
+
+
+
+
+
+    }
+
+
+ var buttonClicked = sessionStorage.getItem('retry');
+ if(buttonClicked=="0")
+ {
+        sessionStorage.setItem('retry', "1"); 
+        ua.register();
+        elements.uaStatus.innerHTML = 'Connected (Registered)';
+         elements.registerButton.innerHTML = 'Unregister';
+    }
+  
+
+
+
+
+elements.registerButton.addEventListener('click', function () {
+  if (!ua) {
+      
+      if(document.getElementById('proxyTypeField').value!="")
+      {
+        
+       var buttonClicked = sessionStorage.getItem('retry');
+        sessionStorage.setItem('retry', "0");
+        window.location.reload();
+    }
+      
+      
+     return;
+     
+  }
+  if (ua.isRegistered()) {
+    ua.unregister();
+  } else {
+    ua.register();
+  }
+  
+  ua.on('connected', function () {
+    elements.uaStatus.innerHTML = 'Connected (Unregistered)';
+  });
+
+  ua.on('registered', function () {
+  elements.registerButton.innerHTML = 'Unregister';
+   elements.uaStatus.innerHTML = 'Connected (Registered)';
+  });
+
+  ua.on('unregistered', function () {
+  elements.registerButton.innerHTML = 'Register';
+ elements.uaStatus.innerHTML = 'Connected (Unregistered)';
+  });
+  
+  
+  
+  
+}, false);
+
+
+  
+
+
+
+
+</script>
+
+</html>
