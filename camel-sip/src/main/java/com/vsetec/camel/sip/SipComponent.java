@@ -352,17 +352,8 @@ public class SipComponent extends DefaultComponent {
 
                 from("sip:ws://" + ourHostIp + ":7060?requestMethod=REGISTER").to("sip:respond?responseCode=200");
                 from("sip:ws://" + ourHostIp + ":7060?requestMethod=INVITE").to("sip:respond?responseCode=100").to("sip:proxy");
-                from("sip:ws://" + ourHostIp + ":7060?requestMethodNot=REGISTER?requestMethodNot=INVITE").to("sip:proxy");
+                from("sip:ws://" + ourHostIp + ":7060?requestMethodNot=REGISTER&requestMethodNot=INVITE").to("sip:proxy");
 
-//                from("sip:udp://0.0.0.0:5060").to("direct:dispatcher");
-//
-//                from("sip:ws://0.0.0.0:6060").to("direct:dispatcher");
-//
-//                from("direct:dispatcher").choice()
-//                        .when().mvel("exchange.in.isRequest() && exchange.in.body.method=='REGISTER'").to("sip:udp://" + sipServer).endChoice()
-//                        .when().mvel("exchange.in.isRequest() && exchange.in.body.method=='INVITE'").to("sip:respond?code=100").to("sip:udp://" + sipServer).endChoice()
-//                        .when().mvel("exchange.in.isResponse() && exchange.in.body.statusCode==100").to("stub:nowhere").endChoice()
-//                        .otherwise().to("sip:proxy");
             }
         });
         camelContext.start();
