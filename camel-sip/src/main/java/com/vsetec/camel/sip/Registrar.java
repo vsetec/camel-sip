@@ -199,6 +199,8 @@ public class Registrar {
     }
 
     public RegistryItem getRegistryItemByContact(String contact) {
+        // TODO: review this
+        contact = _stripUpToSemicolon(contact);
         return _selfNameRegistry.get(contact);
     }
 
@@ -275,7 +277,12 @@ public class Registrar {
         synchronized (items) {
             items.add(item);
         }
-        _selfNameRegistry.put(contactAddress.toString(), item);
+
+        String selfProclaimedName = contactAddress.toString();
+        // TODO review this
+        // strip off all the fancy parameters
+        selfProclaimedName = _stripUpToSemicolon(selfProclaimedName);
+        _selfNameRegistry.put(selfProclaimedName, item);
 
         System.out.println("**********REGISTER***********\nregistrar: " + (registrarAddress == null ? "<this server>" : registrarAddress)
                 + "\nregisteredName: " + registeredAddress
@@ -283,4 +290,13 @@ public class Registrar {
                 + "\nexpiring in sec: " + expires + "\n\n");
 
     }
+
+    private String _stripUpToSemicolon(String string) {
+        int semicolonPos = string.indexOf(";");
+        if (semicolonPos > 0) {
+            string = string.substring(0, semicolonPos);
+        }
+        return string;
+    }
+
 }

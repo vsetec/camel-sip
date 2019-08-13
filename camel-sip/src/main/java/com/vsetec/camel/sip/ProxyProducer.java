@@ -19,6 +19,7 @@ import java.text.ParseException;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.Iterator;
 import java.util.List;
 import java.util.Set;
 import javax.sip.ClientTransaction;
@@ -98,7 +99,6 @@ class ProxyProducer extends DefaultProducer {
             // redirecting to it's own registrar
             ContactHeader contact = (ContactHeader) request.getHeader(ContactHeader.NAME);
             SipURI fromWhom = (SipURI) contact.getAddress().getURI().clone();
-            fromWhom.removeParameter("ob"); //TODO: provide more sophisticated "ob" handling
             RegistryItem myReg = _registrar.getRegistryItemByContact(fromWhom.toString());
             if (myReg != null) {
                 if (myReg._registrarUri != null) {
