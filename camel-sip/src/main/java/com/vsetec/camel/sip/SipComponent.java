@@ -50,6 +50,7 @@ import org.apache.camel.builder.RouteBuilder;
 import org.apache.camel.impl.DefaultCamelContext;
 import org.apache.camel.impl.DefaultComponent;
 import org.apache.camel.impl.DefaultEndpoint;
+import org.apache.camel.util.jsse.SSLContextParameters;
 
 /**
  *
@@ -59,14 +60,13 @@ public class SipComponent extends DefaultComponent {
 
     private final SipFactory _sipFactory = SipFactory.getInstance();
     private final SipStack _sipStack;
-    //private final CamelSipListener _listener = new CamelSipListener();
     private final Registrar _registrar;
     private final HeaderFactory _headerFactory;
     private final AddressFactory _addressFactory;
     private final MessageFactory _messageFactory;
-    private final Object _security;
+    private final SSLContextParameters _security;
 
-    public SipComponent(CamelContext camelContext, String implementationPackage, Map<String, Object> stackParameters, Object security) { // TODO: implement sips - change "security to the appropriate type
+    public SipComponent(CamelContext camelContext, String implementationPackage, Map<String, Object> stackParameters, SSLContextParameters security) { // TODO: implement sips - change "security to the appropriate type
 
         super(camelContext);
 
