@@ -42,15 +42,16 @@ import javax.sip.header.RouteHeader;
 import javax.sip.header.ViaHeader;
 import javax.sip.message.MessageFactory;
 import javax.sip.message.Request;
+import org.apache.camel.CamelConfiguration;
 import org.apache.camel.CamelContext;
 import org.apache.camel.Endpoint;
 import org.apache.camel.Processor;
 import org.apache.camel.Producer;
 import org.apache.camel.builder.RouteBuilder;
-import org.apache.camel.impl.DefaultCamelContext;
-import org.apache.camel.impl.DefaultComponent;
-import org.apache.camel.impl.DefaultEndpoint;
-import org.apache.camel.util.jsse.SSLContextParameters;
+import org.apache.camel.main.Main;
+import org.apache.camel.support.DefaultComponent;
+import org.apache.camel.support.DefaultEndpoint;
+import org.apache.camel.support.jsse.SSLContextParameters;
 
 /**
  *
@@ -66,9 +67,9 @@ public class SipComponent extends DefaultComponent {
     private final MessageFactory _messageFactory;
     private final SSLContextParameters _security;
 
-    public SipComponent(CamelContext camelContext, String implementationPackage, Map<String, Object> stackParameters, SSLContextParameters security) { // TODO: implement sips - change "security to the appropriate type
+    public SipComponent(String implementationPackage, Map<String, Object> stackParameters, SSLContextParameters security) { // TODO: implement sips - change "security to the appropriate type
 
-        super(camelContext);
+        super();
 
         //_ourHost = hostIp;
         _security = security;
@@ -336,26 +337,34 @@ public class SipComponent extends DefaultComponent {
         String ourHostIp = args[0];
         String sipServer = args[1];
 
-        CamelContext camelContext = new DefaultCamelContext();
+        Main main = new Main();
+
         Map<String, Object> props = Collections.singletonMap("gov.nist.javax.sip.MESSAGE_PROCESSOR_FACTORY", "gov.nist.javax.sip.stack.NioMessageProcessorFactory");
-        camelContext.addComponent("sip", new SipComponent(camelContext, "gov.nist", props, null));
 
-        camelContext.addRoutes(new RouteBuilder(camelContext) {
+        main.configure().addConfiguration(new CamelConfiguration() {
             @Override
-            public void configure() throws Exception {
+            public void configure(CamelContext camelContext) throws Exception {
+                camelContext.addComponent("sip", new SipComponent("gov.nist", props, null));
 
-                from("sip:udp://" + ourHostIp + ":5060?requestMethod=REGISTER").to("sip:udp://" + sipServer);
-                from("sip:udp://" + ourHostIp + ":5060?requestMethodNot=REGISTER").to("sip:proxy");
+                camelContext.addRoutes(new RouteBuilder() {
+                    @Override
+                    public void configure() throws Exception {
 
-                from("sip:ws://" + ourHostIp + ":6060?requestMethod=REGISTER").to("sip:udp://" + sipServer);
-                from("sip:ws://" + ourHostIp + ":6060?requestMethodNot=REGISTER").to("sip:proxy");
+                        from("sip:udp://" + ourHostIp + ":5060?requestMethod=REGISTER").to("sip:udp://" + sipServer);
+                        from("sip:udp://" + ourHostIp + ":5060?requestMethodNot=REGISTER").to("sip:proxy");
 
-                from("sip:ws://" + ourHostIp + ":7060?requestMethod=REGISTER").to("sip:respond?responseCode=200");
-                from("sip:ws://" + ourHostIp + ":7060?requestMethod=INVITE").to("sip:respond?responseCode=100").to("sip:proxy");
-                from("sip:ws://" + ourHostIp + ":7060?requestMethodNot=REGISTER&requestMethodNot=INVITE").to("sip:proxy");
+                        from("sip:ws://" + ourHostIp + ":6060?requestMethod=REGISTER").to("sip:udp://" + sipServer);
+                        from("sip:ws://" + ourHostIp + ":6060?requestMethodNot=REGISTER").to("sip:proxy");
 
+                        from("sip:ws://" + ourHostIp + ":7060?requestMethod=REGISTER").to("sip:respond?responseCode=200");
+                        from("sip:ws://" + ourHostIp + ":7060?requestMethod=INVITE").to("sip:respond?responseCode=100").to("sip:proxy");
+                        from("sip:ws://" + ourHostIp + ":7060?requestMethodNot=REGISTER&requestMethodNot=INVITE").to("sip:proxy");
+
+                    }
+                });
             }
         });
-        camelContext.start();
+
+        main.run();
     }
 }

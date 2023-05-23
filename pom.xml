@@ -3,7 +3,7 @@
     <modelVersion>4.0.0</modelVersion>
     <groupId>com.vsetec</groupId>
     <artifactId>camel-sip</artifactId>
-    <version>1.0-SNAPSHOT</version>
+    <version>1.1</version>
     <packaging>jar</packaging>
     <properties>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
@@ -21,8 +21,8 @@
         </dependency>
         <dependency>
             <groupId>org.apache.camel</groupId>
-            <artifactId>camel-core</artifactId>
-            <version>2.24.0</version>
+            <artifactId>camel-main</artifactId>
+            <version>3.20.4</version>
             <type>jar</type>
         </dependency>
         <dependency>

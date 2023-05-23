@@ -23,7 +23,7 @@ import javax.sip.Transaction;
 import javax.sip.message.Request;
 import javax.sip.message.Response;
 import org.apache.camel.CamelContext;
-import org.apache.camel.impl.DefaultMessage;
+import org.apache.camel.support.DefaultMessage;
 
 /**
  *

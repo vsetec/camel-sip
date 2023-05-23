@@ -20,6 +20,7 @@ import javax.sip.SipProvider;
 import org.apache.camel.Endpoint;
 import org.apache.camel.Exchange;
 import org.apache.camel.Processor;
+import org.apache.camel.support.DefaultExchange;
 
 /**
  *
@@ -53,18 +54,33 @@ class Consumer implements org.apache.camel.Consumer {
     }
 
     @Override
-    public void start() throws Exception {
+    public void start() {
         _listener.registerProcessor(_provider, _wrappingProcessor, _requestMethods, _requestMethodsNot, _responseCodes, _responseCodesNot);
     }
 
     @Override
-    public void stop() throws Exception {
+    public void stop() {
         _listener.unregisterProcessor(_wrappingProcessor);
     }
 
     @Override
     public Endpoint getEndpoint() {
         return _endpoint;
+    }
+
+    @Override
+    public Processor getProcessor() {
+        return _wrappingProcessor;
+    }
+
+    @Override
+    public Exchange createExchange(boolean autoRelease) {
+        return new DefaultExchange(_endpoint);
+    }
+
+    @Override
+    public void releaseExchange(Exchange exchange, boolean autoRelease) {
+        // noop
     }
 
 }
