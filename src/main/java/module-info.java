@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-module CamelSIP {
+module VsetecCamelSIP {
     requires jain.sip.ri;
     requires camel.main;
     requires camel.api;
@@ -32,5 +32,4 @@ module CamelSIP {
     requires camel.core.languages;
     requires camel.core.model;
     requires log4j;
-    //requires camel.sip;
 }
