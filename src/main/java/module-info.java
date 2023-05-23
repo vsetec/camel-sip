@@ -31,5 +31,4 @@ module VsetecCamelSIP {
     requires camel.util;
     requires camel.core.languages;
     requires camel.core.model;
-    requires log4j;
 }
